@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "snipe"
+version = "0.1.0"
+description = "lightweight, fast, accurate estimator for basic sequence alignment metrics and more."
+authors = ["Mohamed Abuelanin <mabuelanin@gmail.com>", "Tamer A. Mansour <drtamermansour@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+sourmash = "^4.8.7"
+tqdm = "^4.66.2"
+numpy = "^1.26.4"
+pandas = "^2.2.1"
+jax = "^0.4.25"
+click = "^8.1.7"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+snipe = 'snipe.cli:cli'
