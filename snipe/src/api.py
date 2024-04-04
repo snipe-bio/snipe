@@ -215,8 +215,6 @@ class AmpliconStats(RefStats):
             raise ValueError("All stats must be set before accessing exporting them.")        
         return self.stats
     
-        
-    
 
 class SampleStats:
     def __init__(self, sample_name):
@@ -323,7 +321,7 @@ class Signature:
         self._scale = 0
         self._name = ""
         self._type = signature_type
-        self._reference_signature = {}
+        self._reference_signature = None
         self._amplicon_signatures = {}
         self.reference_stats = None
         self.amplicon_stats = set()
@@ -392,7 +390,7 @@ class Signature:
         
         # we only support a single reference signature at the time
         if not self._reference_signature:
-            self._reference_signature[ref_name] = reference_signature
+            self._reference_signature = reference_signature
         else:
             raise ValueError("Reference signature is already set.")
         
@@ -408,7 +406,7 @@ class Signature:
         # median trimmed stats
         median_trimmed_sample_signature = self.__copy__()
         median_trimmed_sample_signature.apply_median_trim()
-        median_trimmed_intersection_sig = median_trimmed_sample_signature & reference_signature
+        median_trimmed_intersection_sig = median_trimmed_sample_signature & reference_signature        
         ref_stats.median_trimmed_saturation = len(median_trimmed_intersection_sig) / len(reference_signature)
         ref_stats.median_trimmed_unique_hashes = len(median_trimmed_intersection_sig)
         ref_stats.median_trimmed_total_abundance = median_trimmed_intersection_sig.total_abundance
@@ -417,12 +415,20 @@ class Signature:
         
         # calculate non-reference stats
         non_ref_sig = self - reference_signature
-        ref_stats.non_ref_unique_hashes = len(non_ref_sig)
-        ref_stats.non_ref_total_abundance = non_ref_sig.total_abundance
-        ref_stats.non_ref_mean_abundance = non_ref_sig.mean_abundance
-        ref_stats.non_ref_median_abundance = non_ref_sig.median_abundance
         
-        # make sure all stats are set
+        if len(non_ref_sig) == 0:
+            # set all stats to 0
+            ref_stats.non_ref_unique_hashes = 0
+            ref_stats.non_ref_total_abundance = 0
+            ref_stats.non_ref_mean_abundance = 0.0
+            ref_stats.non_ref_median_abundance = 0.0
+        else:
+            ref_stats.non_ref_unique_hashes = len(non_ref_sig)
+            ref_stats.non_ref_total_abundance = non_ref_sig.total_abundance
+            ref_stats.non_ref_mean_abundance = non_ref_sig.mean_abundance
+            ref_stats.non_ref_median_abundance = non_ref_sig.median_abundance
+        
+        # make sure all stats are set        
         ref_stats.check_all_stats()
         self.reference_stats = ref_stats
         
@@ -449,6 +455,14 @@ class Signature:
         
         amplicon_stats = AmpliconStats(amplicon_name)
         
+        amplicon_on_genome = np.intersect1d(self._reference_signature._hashes, amplicon_signature._hashes)
+        if len(amplicon_on_genome) == 0:
+            raise ValueError(f"Amplicon {amplicon_name} is not part of the reference genome.")
+        amplicon_percentage_in_genome = len(amplicon_on_genome) / len(self._reference_signature)
+        if amplicon_percentage_in_genome < 0.01:
+            print(f"Warning: Amplicon {amplicon_name} is only {amplicon_percentage_in_genome * 100:.2f}% in the reference genome.")    
+        
+
         intersection_sig = self & amplicon_signature
         amplicon_stats.saturation = len(intersection_sig) / len(amplicon_signature)
         amplicon_stats.relative_saturation = amplicon_stats.saturation / self.reference_stats.saturation
@@ -456,13 +470,17 @@ class Signature:
         amplicon_stats.total_abundance = intersection_sig.total_abundance
         amplicon_stats.mean_abundance = intersection_sig.mean_abundance
         amplicon_stats.median_abundance = intersection_sig.median_abundance
-        amplicon_stats.relative_mean_abundance = amplicon_stats.mean_abundance / self.reference_stats.mean_abundance
+        
         
         subtracted_sig = self - amplicon_signature
         amplicon_stats.non_ref_unique_hashes = len(subtracted_sig)
         amplicon_stats.non_ref_total_abundance = subtracted_sig.total_abundance
         amplicon_stats.non_ref_mean_abundance = subtracted_sig.mean_abundance
         amplicon_stats.non_ref_median_abundance = subtracted_sig.median_abundance
+        
+        
+        amplicon_stats.relative_mean_abundance = amplicon_stats.median_abundance / amplicon_stats.non_ref_mean_abundance
+        
         
         
         # median trimmed stats
@@ -729,5 +747,5 @@ class Signature:
         with sourmash.sourmash_args.FileOutput(output_path, 'wt') as fp:
             sourmash.save_signatures([finalSig], fp=fp)
         
-        print(f"Signature exported to Sourmash format: {output_path}")        
+        print(f"Signature exported to Sourmash format: {output_path}")
         
