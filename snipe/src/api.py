@@ -659,9 +659,38 @@ class Signature:
             return NotImplemented
         self._is_compatible_for_set_operation(other)
         new_hashes, indices_self, indices_other = np.intersect1d(self._hashes, other._hashes, return_indices=True)
-        new_abundances = np.minimum(self._abundances[indices_self], other._abundances[indices_other])
+        new_abundances = self._abundances[indices_self]
         return self._create_new_signature(new_hashes, new_abundances)
     
+    def __add__(self, other):
+        """Union of two signatures, combining hashes and abundances."""
+        if not isinstance(other, Signature):
+            return NotImplemented
+        
+        # other must be of the same type
+        if self._type != other._type:
+            raise ValueError("Signatures must be of the same type.")
+
+        # union hashes, and add abundances for same hash
+        # Combine hashes and corresponding abundances
+        combined_hashes = np.concatenate((self._hashes, other._hashes))
+        combined_abundances = np.concatenate((self._abundances, other._abundances))
+
+        # Use np.unique to identify unique hashes and their indices, then sum the abundances
+        unique_hashes, indices = np.unique(combined_hashes, return_inverse=True)
+        summed_abundances = np.bincount(indices, weights=combined_abundances)
+
+        return self._create_new_signature(unique_hashes, summed_abundances)
+
+    def __radd__(self, other):
+        if other == 0:
+            return self
+        else:
+            return self.__add__(other)
+    
+    def __repr__(self):
+        return f"Signature(hashes={self._hashes}, abundances={self._abundances}, type={self._type})"
+
 
     def __len__(self):
         return len(self._hashes)
@@ -706,12 +735,14 @@ class Signature:
         new_sig._name = f"{self._name}"
         new_sig._type = self._type
         new_sig._k_size = self._k_size
-        new_sig._reference_signature = self._reference_signature
-        new_sig._amplicon_signatures = self._amplicon_signatures
-        new_sig.reference_stats = self.reference_stats
-        new_sig.amplicon_stats = self.amplicon_stats
+        new_sig._reference_signature = None
+        new_sig._amplicon_signatures = {}
+        # new_sig._reference_signature = self._reference_signature
+        # new_sig._amplicon_signatures = self._amplicon_signatures
+        # new_sig.reference_stats = self.reference_stats
+        # new_sig.amplicon_stats = self.amplicon_stats
         
-        
+
         if suffix:
             new_sig._name += f"_{suffix}"
         return new_sig
