@@ -9,7 +9,7 @@ class SigType(Enum):
     SAMPLE = auto()
     GENOME = auto()
     AMPLICON = auto()
-    
+
 
 class RefStats:
     def __init__(self, ref_name):
@@ -324,7 +324,7 @@ class Signature:
         self._reference_signature = None
         self._amplicon_signatures = {}
         self.reference_stats = None
-        self.amplicon_stats = set()
+        self.amplicon_stats = {}
         
         
 
@@ -435,7 +435,7 @@ class Signature:
         return True
         
         
-    def add_amplicon_signature(self, amplicon_signature):
+    def add_amplicon_signature(self, amplicon_signature, name: str = None):
         if not self._reference_signature:
             raise ValueError("Reference signature must be set before adding amplicon signatures.")
         if self.scale != amplicon_signature.scale:
@@ -499,7 +499,13 @@ class Signature:
         # make sure all stats are set
         amplicon_stats.check_all_stats()
         
-        self.amplicon_stats.add(amplicon_stats)
+        _amplicon_final_name = name if name else amplicon_name
+        
+        # make sure there is no duplicate name or checksum
+        if _amplicon_final_name in self.amplicon_stats:
+            raise ValueError(f"Amplicon {_amplicon_final_name} is already added.")
+        
+        self.amplicon_stats[_amplicon_final_name] = amplicon_stats
         return True
 
 
@@ -647,6 +653,7 @@ class Signature:
         
         compatible_combinations = [
             (SigType.SAMPLE, SigType.GENOME),
+            (SigType.SAMPLE, SigType.SAMPLE),
             (SigType.SAMPLE, SigType.AMPLICON)
         ]
         if (self._type, other._type) not in compatible_combinations:

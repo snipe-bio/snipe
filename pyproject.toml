@@ -1,17 +1,25 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
 name = "snipe"
 version = "0.1.0"
 description = "lightweight, fast, accurate estimator for basic sequence alignment metrics and more."
-authors = ["Mohamed Abuelanin <mabuelanin@gmail.com>", "Tamer A. Mansour <drtamermansour@gmail.com>"]
+authors = [
+    "Mohamed Abuelanin <mabuelanin@gmail.com>",
+    "Tamer A. Mansour <drtamermansour@gmail.com>"
+]
+license = "MIT"
 readme = "README.md"
-
-[project]
-name = "snipe"
-version = "0.1.0"
-description = "lightweight, fast, accurate estimator for basic sequence alignment metrics and more."
-authors = [{name = "Mohamed Abuelanin", email = "mabuelanin@gmail.com"}, {name = "Tamer A. Mansour", email = "drtamermansour@gmail.com"}]
-readme = "README.md"
-
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+packages = [
+    { include = "snipe" }
+]
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -22,27 +30,25 @@ pandas = "^2.2.1"
 jax = "^0.4.25"
 click = "^8.1.7"
 
-
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-py-modules = []
+[tool.poetry.dev-dependencies]
+pytest = "^8.1.1"
 
 [tool.poetry.scripts]
 snipe = 'snipe.cli:cli'
 
+# Conda build configuration (managed separately)
 [tool.pixi.project]
 name = "snipe"
 channels = ["conda-forge", "bioconda"]
 platforms = ["linux-64"]
 
+# Pixi tasks for development activities
 [tool.pixi.tasks]
 fmt = "ruff format"
 lint = "ruff check --fix"
-snipe = "python -m snipe.cli"
+test = "pytest tests"
 
+# Pixi dependencies mirrored to match Poetry but in Conda format
 [tool.pixi.dependencies]
 python = ">=3.12"
 sourmash = ">=4.8.7"
@@ -55,5 +61,3 @@ jaxlib = ">=0.4.23,<0.5"
 pytest = ">=8.1.1,<8.2"
 nodejs = ">=20.9.0,<20.10"
 ijson = ">=3.2.3,<3.3"
-
-
