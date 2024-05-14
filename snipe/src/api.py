@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import ijson
 import hashlib
 
 from enum import Enum, auto
@@ -339,13 +338,16 @@ class Signature:
 
     def load_from_path(self, path: str):
         try:
-            with open(path, 'rb') as file:
+            with open(path, 'r') as file:
                 try:
-                    data = ijson.items(file, 'item')
-                    return self.process_signature_data(next(data))
-                except ijson.common.IncompleteJSONError:
-                    return None, False, "Error: Incomplete JSON content."
-                except StopIteration:
+                    data = json.load(file)
+                    if isinstance(data, list):
+                        return self.process_signature_data(data[0])
+                    else:
+                        return None, False, "Error: Expected a list of items in JSON."
+                except json.JSONDecodeError:
+                    return None, False, "Error: Incomplete or invalid JSON content."
+                except IndexError:
                     return None, False, "Error: No items found in JSON."
         except FileNotFoundError:
             return None, False, f"Error: File '{path}' not found."
