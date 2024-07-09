@@ -248,6 +248,8 @@ class SampleStats:
         
     @total_abundance.setter
     def total_abundance(self, value):
+        if not isinstance(value, int):
+            raise ValueError("total_abundance must be an integer.")
         self.stats["total_abundance"] = value
         
     @property
@@ -314,8 +316,8 @@ class Signature:
             raise ValueError(f"signature_type must be an instance of SignatureType, got {type(signature_type)}")
         
         self._k_size = k_size
-        self._hashes = np.array([], dtype=int)
-        self._abundances = np.array([], dtype=int)
+        self._hashes = np.array([], dtype=np.uint64)
+        self._abundances = np.array([], dtype=np.uint64)
         self._md5sum = ""
         self._scale = 0
         self._name = ""
@@ -363,11 +365,11 @@ class Signature:
                 if signature.get("ksize") == self._k_size:
                     found = True
                     self._name = d.get("name", "")
-                    self._hashes = np.array(signature.get("mins", []), dtype=int)
+                    self._hashes = np.array(signature.get("mins", []), dtype=np.uint64)
                     self._md5sum = signature.get("md5sum", "")
                     self._scale = 18446744073709551615 // signature.get("max_hash", 1)
                     if "abundances" in signature:
-                        self._abundances = np.array(signature["abundances"], dtype=int)
+                        self._abundances = np.array(signature["abundances"], dtype=np.uint64)
                         if len(self._hashes) != len(self._abundances):
                             return None, False, "Error: The number of hashes and abundances do not match."
                     else:
@@ -594,14 +596,14 @@ class Signature:
     
     @property
     def total_abundance(self):
-        return np.sum(self._abundances)
+        return sum(self._abundances)
     
     @property
     def median_trimmed_stats(self):
         median_abundance = np.median(self._abundances)
         mask = self._abundances >= median_abundance
         trimmed_abundances = self._abundances[mask]
-        _total_abundance = np.sum(trimmed_abundances)
+        _total_abundance = int(sum(trimmed_abundances))
         _median = np.median(trimmed_abundances)
         _mean = np.mean(trimmed_abundances)
         _std = np.std(trimmed_abundances)
@@ -615,17 +617,17 @@ class Signature:
     @property
     def abundance_stats(self):
         return {
-            "total": np.sum(self._abundances),
-            "median": np.median(self._abundances),
-            "mean": np.mean(self._abundances),
-            "std": np.std(self._abundances)
+            "total": int(np.sum(self._abundances)),
+            "median": int(np.median(self._abundances)),
+            "mean": int(np.mean(self._abundances)),
+            "std": int(np.std(self._abundances))
         }
         
     @property
     def all_stats(self):
         d = {
             "unique_hashes": self.unique_hashes,
-            "total_abundance": self.total_abundance,
+            "total_abundance": int(self.total_abundance),
             "abundance_stats": self.abundance_stats,
             "median_trimmed_stats": self.median_trimmed_stats
         }
@@ -758,7 +760,7 @@ class Signature:
 
     def _union_abundances(self, new_hashes, other):
         """Compute abundances for the union of two signatures."""
-        new_abundances = np.zeros_like(new_hashes, dtype=int)
+        new_abundances = np.zeros_like(new_hashes, dtype=np.uint64)
         for i, hash_val in enumerate(new_hashes):
             if hash_val in self._hashes:
                 idx = np.where(self._hashes == hash_val)[0][0]
