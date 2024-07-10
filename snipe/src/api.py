@@ -834,26 +834,31 @@ class Signature:
         ]
         
         sample_roi_stats_data = []
+
+        # Initialize a cumulative signature for previous parts
+        cumulative_snipe_sig = None
+
         for i in range(n):
-            previous_parts = [split_sigs[x] for x in range(0, i)]
             current_part = split_sigs[i]
-            if not previous_parts:
+            
+            if cumulative_snipe_sig is None:
+                cumulative_snipe_sig = current_part
                 continue
+
+            # Add the current part to the cumulative signature
+            current_part_snipe_sig = cumulative_snipe_sig + current_part
             
-            previous_parts_snipe_sig = sum([split_sigs[x] for x in range(0, i)])             
-            current_part_snipe_sig = previous_parts_snipe_sig + split_sigs[i]
-            
-            # calculate the current part coverage
+            # Calculate the current part coverage
             current_part_snipe_sig.add_reference_signature(self._reference_signature)
             current_part_saturation = current_part_snipe_sig.reference_stats.saturation
             current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
             
-            # calculate the previous parts saturation
-            previous_parts_snipe_sig.add_reference_signature(self._reference_signature)
-            previous_parts_saturation = previous_parts_snipe_sig.reference_stats.saturation
-            previous_parts_mean_abundance = previous_parts_snipe_sig.reference_stats.mean_abundance
+            # Calculate the cumulative saturation up to the previous part
+            cumulative_snipe_sig.add_reference_signature(self._reference_signature)
+            previous_parts_saturation = cumulative_snipe_sig.reference_stats.saturation
+            previous_parts_mean_abundance = cumulative_snipe_sig.reference_stats.mean_abundance
             
-            # calculate delta_saturation
+            # Calculate delta_saturation
             delta_saturation = current_part_saturation - previous_parts_saturation
             
             stats = {
@@ -863,8 +868,10 @@ class Signature:
             }
             
             sample_roi_stats_data.append(stats)
-        
-        
+            
+            # Update the cumulative signature to include the current part
+            cumulative_snipe_sig += current_part
+
         return sample_roi_stats_data
         
         
