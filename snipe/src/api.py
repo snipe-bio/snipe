@@ -791,3 +791,82 @@ class Signature:
         
         print(f"Signature exported to Sourmash format: {output_path}")
         
+        
+    # return on investment ROI calculation
+    def calculate_roi(self, n = 30):
+        def distribute_kmers_random(original_dict, n):
+            import random
+            # Initialize the resulting dictionaries
+            distributed_dicts = [{} for _ in range(n)]
+            
+            # Convert the dictionary to a sorted list of tuples (k, v) by key
+            kmer_list = sorted(original_dict.items())
+            
+            # Flatten the k-mer list according to their abundance
+            flat_kmer_list = []
+            for k, v in kmer_list:
+                flat_kmer_list.extend([k] * v)
+            
+            # Shuffle the flat list to randomize the distribution
+            random.shuffle(flat_kmer_list)
+            
+            # Distribute the k-mers round-robin into the dictionaries
+            for i, k in enumerate(flat_kmer_list):
+                dict_index = i % n
+                if k in distributed_dicts[dict_index]:
+                    distributed_dicts[dict_index][k] += np.uint64(1)
+                else:
+                    distributed_dicts[dict_index][k] = np.uint64(1)
+            
+            return distributed_dicts
+        
+        # check if the signature has a reference signature
+        if not self._reference_signature:
+            _err = "Reference signature must be set before calculating ROI."
+            raise ValueError(_err)
+
+        # Split the signature into n random signatures
+        hash_to_abund = dict(zip(self.hashes, self.abundances))
+        random_split_sigs = distribute_kmers_random(hash_to_abund, n)
+        split_sigs = [
+            self._create_new_signature(np.array(list(x.keys()), dtype=np.uint64), np.array(list(x.values()), dtype=np.uint64), f"ROI_{i}")
+            for i, x in enumerate(random_split_sigs)
+        ]
+        
+        sample_roi_stats_data = []
+        for i in range(n):
+            previous_parts = [split_sigs[x] for x in range(0, i)]
+            current_part = split_sigs[i]
+            if not previous_parts:
+                continue
+            
+            previous_parts_snipe_sig = sum([split_sigs[x] for x in range(0, i)])             
+            current_part_snipe_sig = previous_parts_snipe_sig + split_sigs[i]
+            
+            # calculate the current part coverage
+            current_part_snipe_sig.add_reference_signature(self._reference_signature)
+            current_part_saturation = current_part_snipe_sig.reference_stats.saturation
+            current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
+            
+            # calculate the previous parts saturation
+            previous_parts_snipe_sig.add_reference_signature(self._reference_signature)
+            previous_parts_saturation = previous_parts_snipe_sig.reference_stats.saturation
+            previous_parts_mean_abundance = previous_parts_snipe_sig.reference_stats.mean_abundance
+            
+            # calculate delta_saturation
+            delta_saturation = current_part_saturation - previous_parts_saturation
+            
+            stats = {
+                'current_part_saturation': current_part_saturation,
+                'previous_mean_abundance': previous_parts_mean_abundance,
+                'delta_saturation': delta_saturation
+            }
+            
+            sample_roi_stats_data.append(stats)
+        
+        
+        return sample_roi_stats_data
+        
+        
+        
+        
