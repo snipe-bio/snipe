@@ -1,8 +1,12 @@
 import json
 import numpy as np
 import hashlib
-
+import random
 from enum import Enum, auto
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+import matplotlib.pyplot as plt
+
 
 class SigType(Enum):
     SAMPLE = auto()
@@ -326,6 +330,8 @@ class Signature:
         self._amplicon_signatures = {}
         self.reference_stats = None
         self.amplicon_stats = {}
+        self.genomic_roi_stats_data = None
+        self.amplicons_roi_stats_data = None
         
         
 
@@ -685,11 +691,11 @@ class Signature:
         # union hashes, and add abundances for same hash
         # Combine hashes and corresponding abundances
         combined_hashes = np.concatenate((self._hashes, other._hashes))
-        combined_abundances = np.concatenate((self._abundances, other._abundances))
+        combined_abundances = np.concatenate((self._abundances, other._abundances)).astype(np.uint64)
 
         # Use np.unique to identify unique hashes and their indices, then sum the abundances
         unique_hashes, indices = np.unique(combined_hashes, return_inverse=True)
-        summed_abundances = np.bincount(indices, weights=combined_abundances)
+        summed_abundances = np.bincount(indices, weights=combined_abundances).astype(np.uint64)
 
         return self._create_new_signature(unique_hashes, summed_abundances)
 
@@ -791,34 +797,123 @@ class Signature:
         
         print(f"Signature exported to Sourmash format: {output_path}")
         
+    @staticmethod
+    def distribute_kmers_random(original_dict, n):
         
+        # Initialize the resulting dictionaries
+        distributed_dicts = [{} for _ in range(n)]
+        
+        # Convert the dictionary to a sorted list of tuples (k, v) by key
+        kmer_list = sorted(original_dict.items())
+        
+        # Flatten the k-mer list according to their abundance
+        flat_kmer_list = []
+        for k, v in kmer_list:
+            flat_kmer_list.extend([k] * v)
+        
+        # Shuffle the flat list to randomize the distribution
+        random.shuffle(flat_kmer_list)
+        
+        # Distribute the k-mers round-robin into the dictionaries
+        for i, k in enumerate(flat_kmer_list):
+            dict_index = i % n
+            if k in distributed_dicts[dict_index]:
+                distributed_dicts[dict_index][k] += np.uint64(1)
+            else:
+                distributed_dicts[dict_index][k] = np.uint64(1)
+        
+        return distributed_dicts
+    
+    
+    def split_sig_randomly(self, n):
+        # Split the signature into n random signatures
+        hash_to_abund = dict(zip(self.hashes, self.abundances))
+        random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
+        # split_sigs = [
+        #     self._create_new_signature(np.array(list(x.keys()), dtype=np.uint64), np.array(list(x.values()), dtype=np.uint64), f"split_{i}")
+        #     for i, x in enumerate(random_split_sigs)
+        # ]
+        split_sigs = [
+            self._create_new_signature(
+                np.fromiter(x.keys(), dtype=np.uint64),
+                np.fromiter(x.values(), dtype=np.uint64),
+                f"{self.name}_split_{i}"
+            )
+            for i, x in enumerate(random_split_sigs)
+        ]
+        return split_sigs
+    
+
     # return on investment ROI calculation
-    def calculate_roi(self, n = 30):
-        def distribute_kmers_random(original_dict, n):
-            import random
-            # Initialize the resulting dictionaries
-            distributed_dicts = [{} for _ in range(n)]
+    def calculate_genomic_roi(self, n = 30):
+        # check if the signature has a reference signature
+        if not self._reference_signature:
+            _err = "Reference signature must be set before calculating ROI."
+            raise ValueError(_err)
+
+        # Split the signature into n random signatures
+        # hash_to_abund = dict(zip(self.hashes, self.abundances))
+        # random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
+        # # split_sigs = [
+        #     self._create_new_signature(np.array(list(x.keys()), dtype=np.uint64), np.array(list(x.values()), dtype=np.uint64), f"ROI_{i}")
+        #     for i, x in enumerate(random_split_sigs)
+        # ]
+        
+        split_sigs = self.split_sig_randomly(n)
+        
+        sample_roi_stats_data = []
+
+        # Initialize a cumulative signature for previous parts
+        cumulative_snipe_sig = None
+
+        for i in range(n):
+            current_part = split_sigs[i]
             
-            # Convert the dictionary to a sorted list of tuples (k, v) by key
-            kmer_list = sorted(original_dict.items())
+            if cumulative_snipe_sig is None:
+                cumulative_snipe_sig = current_part
+                continue
+
+            # Add the current part to the cumulative signature
+            current_part_snipe_sig = cumulative_snipe_sig + current_part
             
-            # Flatten the k-mer list according to their abundance
-            flat_kmer_list = []
-            for k, v in kmer_list:
-                flat_kmer_list.extend([k] * v)
+            # Calculate the current part coverage
+            current_part_snipe_sig.add_reference_signature(self._reference_signature)
+            current_part_saturation = current_part_snipe_sig.reference_stats.saturation
+            current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
             
-            # Shuffle the flat list to randomize the distribution
-            random.shuffle(flat_kmer_list)
+            # Calculate the cumulative saturation up to the previous part
+            cumulative_snipe_sig.add_reference_signature(self._reference_signature)
+            previous_parts_saturation = cumulative_snipe_sig.reference_stats.saturation
+            previous_parts_mean_abundance = cumulative_snipe_sig.reference_stats.mean_abundance
             
-            # Distribute the k-mers round-robin into the dictionaries
-            for i, k in enumerate(flat_kmer_list):
-                dict_index = i % n
-                if k in distributed_dicts[dict_index]:
-                    distributed_dicts[dict_index][k] += np.uint64(1)
-                else:
-                    distributed_dicts[dict_index][k] = np.uint64(1)
+            # Calculate delta_saturation
+            delta_saturation = current_part_saturation - previous_parts_saturation
             
-            return distributed_dicts
+            stats = {
+                'current_part_saturation': current_part_saturation,
+                'previous_mean_abundance': previous_parts_mean_abundance,
+                'delta_saturation': delta_saturation
+            }
+            
+            sample_roi_stats_data.append(stats)
+            
+            # Update the cumulative signature to include the current part
+            cumulative_snipe_sig += current_part
+        
+        # keep the genomic roi stats data for further analysis
+        self.genomic_roi_stats_data = sample_roi_stats_data
+        return sample_roi_stats_data
+    
+    def get_genomic_roi_stats(self):
+        if not self.genomic_roi_stats_data:
+            raise ValueError("Genomic ROI stats data is not available.")
+        
+        # wasm-friendly format
+        return {x['previous_mean_abundance']: x['delta_saturation'] for x in self.genomic_roi_stats_data}
+    
+    
+    def calculate_amplicon_roi(self, n = 30):
+        # TODO: implement amplicon ROI calculation
         
         # check if the signature has a reference signature
         if not self._reference_signature:
@@ -827,7 +922,7 @@ class Signature:
 
         # Split the signature into n random signatures
         hash_to_abund = dict(zip(self.hashes, self.abundances))
-        random_split_sigs = distribute_kmers_random(hash_to_abund, n)
+        random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
         split_sigs = [
             self._create_new_signature(np.array(list(x.keys()), dtype=np.uint64), np.array(list(x.values()), dtype=np.uint64), f"ROI_{i}")
             for i, x in enumerate(random_split_sigs)
@@ -871,9 +966,73 @@ class Signature:
             
             # Update the cumulative signature to include the current part
             cumulative_snipe_sig += current_part
-
+        
+        # keep the genomic roi stats data for further analysis
+        self.genomic_roi_stats_data = sample_roi_stats_data
         return sample_roi_stats_data
         
+
+
+    def predict_ROI(self, df, n_predict, show_plot=False):
+        if n_predict <= len(df):
+            raise ValueError(f"n_predict must be greater than the number of training points. Required: more than {len(df)}, Provided: {n_predict}")
         
+        # Train with all available data points
+        X_train = df[['previous_mean_abundance']]
+        y_train = np.log(df['delta_saturation'])
         
+        model = LinearRegression()
+        model.fit(X_train, y_train)
         
+        # Calculate the average distance between points on the x-axis
+        x_values = df['previous_mean_abundance'].values
+        average_distance = np.mean(np.diff(x_values))
+        
+        # Generate the x-values for extrapolation
+        last_known_value = x_values[-1]
+        n_extra = n_predict - len(df)
+        extrapolated_values = np.arange(1, n_extra + 1) * average_distance + last_known_value
+        
+        # Print the extra increase in the x-axis
+        extra_increase = extrapolated_values[-1] - last_known_value
+        print(f"Extra increase in x-axis to achieve new coverage: {extra_increase}")
+        
+        extrapolated_values = extrapolated_values.reshape(-1, 1)
+        y_pred_extrapolated = np.exp(model.predict(extrapolated_values))
+        
+        if show_plot:
+            plt.figure(figsize=(10, 6))
+            plt.scatter(X_train, np.exp(y_train), color='blue', label='Training points')
+            plt.scatter(extrapolated_values, y_pred_extrapolated, color='purple', marker='x', label='Extrapolated points')
+            
+            # Plot the complete line
+            X_all_extended = pd.concat([X_train, pd.DataFrame(extrapolated_values, columns=['previous_mean_abundance'])])
+            y_all_extended = np.concatenate([np.exp(y_train), y_pred_extrapolated])
+            plt.plot(X_all_extended, y_all_extended, color='orange', label='Model prediction curve')
+            
+            plt.xlabel('Previous Mean Abundance')
+            plt.ylabel('Delta Saturation')
+            plt.title('Training and Extrapolated Data Points')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+        
+        extrapolated_data = pd.DataFrame({
+            'previous_mean_abundance': extrapolated_values.flatten(),
+            'delta_saturation': y_pred_extrapolated
+        })
+        
+        # Calculate the final saturation
+        last_known_saturation = df.iloc[-1]['current_part_saturation']
+        extrapolated_data['cumulative_saturation'] = last_known_saturation + extrapolated_data['delta_saturation'].cumsum()
+        
+        final_saturation = extrapolated_data.iloc[-1]['cumulative_saturation']
+        
+        combined_data = pd.concat([df, extrapolated_data]).reset_index(drop=True)
+        
+        predicted_points = {
+            'x': extrapolated_data['previous_mean_abundance'].tolist(),
+            'y': extrapolated_data['cumulative_saturation'].tolist()
+        }
+        
+        return predicted_points, combined_data, final_saturation
