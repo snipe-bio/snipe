@@ -22,13 +22,13 @@ class RefStats:
     
     def _create_ref_amplicon_stats_template(self, ref_name):
         return {
-            f"{ref_name}_saturation": -1.0,
+            f"{ref_name}_coverage_index": -1.0,
             f"{ref_name}_unique_hashes": -1,
             f"{ref_name}_total_abundance": -1,
             f"{ref_name}_mean_abundance": -1.0,
             f"{ref_name}_median_abundance": -1.0,
 
-            f"{ref_name}_median_trimmed_saturation": -1.0,
+            f"{ref_name}_median_trimmed_coverage_index": -1.0,
             f"{ref_name}_median_trimmed_unique_hashes": -1,
             f"{ref_name}_median_trimmed_total_abundance": -1,
             f"{ref_name}_median_trimmed_mean_abundance": -1.0,
@@ -42,12 +42,12 @@ class RefStats:
     
     
     @property
-    def saturation(self):
-        return self.stats[f"{self.ref_name}_saturation"]
+    def coverage_index(self):
+        return self.stats[f"{self.ref_name}_coverage_index"]
     
-    @saturation.setter
-    def saturation(self, value):
-        self.stats[f"{self.ref_name}_saturation"] = value
+    @coverage_index.setter
+    def coverage_index(self, value):
+        self.stats[f"{self.ref_name}_coverage_index"] = value
     
     @property
     def unique_hashes(self):
@@ -82,12 +82,12 @@ class RefStats:
         self.stats[f"{self.ref_name}_median_abundance"] = value
         
     @property
-    def median_trimmed_saturation(self):
-        return self.stats[f"{self.ref_name}_median_trimmed_saturation"]
+    def median_trimmed_coverage_index(self):
+        return self.stats[f"{self.ref_name}_median_trimmed_coverage_index"]
         
-    @median_trimmed_saturation.setter
-    def median_trimmed_saturation(self, value):
-        self.stats[f"{self.ref_name}_median_trimmed_saturation"] = value
+    @median_trimmed_coverage_index.setter
+    def median_trimmed_coverage_index(self, value):
+        self.stats[f"{self.ref_name}_median_trimmed_coverage_index"] = value
     
     @property
     def median_trimmed_unique_hashes(self):
@@ -172,29 +172,29 @@ class AmpliconStats(RefStats):
     def __init__(self, ref_name):
         super().__init__(ref_name)
     
-        # add relative saturation
-        self.stats[f"{ref_name}_relative_saturation"] = -1.0
-        self.stats[f"{ref_name}_median_trimmed_relative_saturation"] = -1.0
+        # add relative coverage_index
+        self.stats[f"{ref_name}_relative_coverage_index"] = -1.0
+        self.stats[f"{ref_name}_median_trimmed_relative_coverage_index"] = -1.0
         
         # relative abundance
         self.stats[f"{ref_name}_relative_mean_abundance"] = -1.0
         self.stats[f"{ref_name}_median_trimmed_relative_mean_abundance"] = -1.0
 
     @property
-    def relative_saturation(self):
-        return self.stats[f"{self.ref_name}_relative_saturation"]
+    def relative_coverage_index(self):
+        return self.stats[f"{self.ref_name}_relative_coverage_index"]
     
-    @relative_saturation.setter
-    def relative_saturation(self, value):
-        self.stats[f"{self.ref_name}_relative_saturation"] = value
+    @relative_coverage_index.setter
+    def relative_coverage_index(self, value):
+        self.stats[f"{self.ref_name}_relative_coverage_index"] = value
         
     @property
-    def median_trimmed_relative_saturation(self):
-        return self.stats[f"{self.ref_name}_median_trimmed_relative_saturation"]
+    def median_trimmed_relative_coverage_index(self):
+        return self.stats[f"{self.ref_name}_median_trimmed_relative_coverage_index"]
         
-    @median_trimmed_relative_saturation.setter
-    def median_trimmed_relative_saturation(self, value):
-        self.stats[f"{self.ref_name}_median_trimmed_relative_saturation"] = value
+    @median_trimmed_relative_coverage_index.setter
+    def median_trimmed_relative_coverage_index(self, value):
+        self.stats[f"{self.ref_name}_median_trimmed_relative_coverage_index"] = value
 
     @property
     def relative_mean_abundance(self):
@@ -407,7 +407,7 @@ class Signature:
         ref_stats = RefStats(ref_name)
         
         intersection_sig = self & reference_signature
-        ref_stats.saturation = len(intersection_sig) / len(reference_signature)
+        ref_stats.coverage_index = len(intersection_sig) / len(reference_signature)
         ref_stats.unique_hashes = len(intersection_sig)
         ref_stats.total_abundance = intersection_sig.total_abundance
         ref_stats.mean_abundance = intersection_sig.mean_abundance
@@ -417,7 +417,7 @@ class Signature:
         median_trimmed_sample_signature = self.__copy__()
         median_trimmed_sample_signature.apply_median_trim()
         median_trimmed_intersection_sig = median_trimmed_sample_signature & reference_signature        
-        ref_stats.median_trimmed_saturation = len(median_trimmed_intersection_sig) / len(reference_signature)
+        ref_stats.median_trimmed_coverage_index = len(median_trimmed_intersection_sig) / len(reference_signature)
         ref_stats.median_trimmed_unique_hashes = len(median_trimmed_intersection_sig)
         ref_stats.median_trimmed_total_abundance = median_trimmed_intersection_sig.total_abundance
         ref_stats.median_trimmed_mean_abundance = median_trimmed_intersection_sig.mean_abundance
@@ -474,8 +474,8 @@ class Signature:
         
 
         intersection_sig = self & amplicon_signature
-        amplicon_stats.saturation = len(intersection_sig) / len(amplicon_signature)
-        amplicon_stats.relative_saturation = amplicon_stats.saturation / self.reference_stats.saturation
+        amplicon_stats.coverage_index = len(intersection_sig) / len(amplicon_signature)
+        amplicon_stats.relative_coverage_index = amplicon_stats.coverage_index / self.reference_stats.coverage_index
         amplicon_stats.unique_hashes = len(intersection_sig)
         amplicon_stats.total_abundance = intersection_sig.total_abundance
         amplicon_stats.mean_abundance = intersection_sig.mean_abundance
@@ -497,8 +497,8 @@ class Signature:
         median_trimmed_sample_signature = self.__copy__()
         median_trimmed_sample_signature.apply_median_trim()
         median_trimmed_intersection_sig = median_trimmed_sample_signature & amplicon_signature
-        amplicon_stats.median_trimmed_saturation = len(median_trimmed_intersection_sig) / len(amplicon_signature)
-        amplicon_stats.median_trimmed_relative_saturation = amplicon_stats.median_trimmed_saturation / self.reference_stats.median_trimmed_saturation
+        amplicon_stats.median_trimmed_coverage_index = len(median_trimmed_intersection_sig) / len(amplicon_signature)
+        amplicon_stats.median_trimmed_relative_coverage_index = amplicon_stats.median_trimmed_coverage_index / self.reference_stats.median_trimmed_coverage_index
         amplicon_stats.median_trimmed_unique_hashes = len(median_trimmed_intersection_sig)
         amplicon_stats.median_trimmed_total_abundance = median_trimmed_intersection_sig.total_abundance
         amplicon_stats.median_trimmed_mean_abundance = median_trimmed_intersection_sig.mean_abundance
@@ -843,6 +843,51 @@ class Signature:
         ]
         return split_sigs
     
+    def calculate_genomic_roi_pre_split(self, split_sigs):
+        sample_roi_stats_data = []
+
+        # Initialize a cumulative signature for previous parts
+        cumulative_snipe_sig = None
+        n = len(split_sigs)
+        for i in range(n):
+            current_part = split_sigs[i]
+            
+            if cumulative_snipe_sig is None:
+                cumulative_snipe_sig = current_part
+                continue
+
+            # Add the current part to the cumulative signature
+            current_part_snipe_sig = cumulative_snipe_sig + current_part
+            
+            # Calculate the current part coverage
+            current_part_snipe_sig.add_reference_signature(self._reference_signature)
+            current_part_coverage_index = current_part_snipe_sig.reference_stats.coverage_index
+            current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
+            
+            # Calculate the cumulative coverage_index up to the previous part
+            cumulative_snipe_sig.add_reference_signature(self._reference_signature)
+            previous_parts_coverage_index = cumulative_snipe_sig.reference_stats.coverage_index
+            previous_parts_mean_abundance = cumulative_snipe_sig.reference_stats.mean_abundance
+            
+            # Calculate delta_coverage_index
+            delta_coverage_index = current_part_coverage_index - previous_parts_coverage_index
+            
+            stats = {
+                'current_part_coverage_index': current_part_coverage_index,
+                'previous_mean_abundance': previous_parts_mean_abundance,
+                'delta_coverage_index': delta_coverage_index
+            }
+            
+            sample_roi_stats_data.append(stats)
+            
+            # Update the cumulative signature to include the current part
+            cumulative_snipe_sig += current_part
+        
+        # keep the genomic roi stats data for further analysis
+        self.genomic_roi_stats_data = sample_roi_stats_data
+        return sample_roi_stats_data
+        
+    
 
     # return on investment ROI calculation
     def calculate_genomic_roi(self, n = 30):
@@ -860,56 +905,14 @@ class Signature:
         # ]
         
         split_sigs = self.split_sig_randomly(n)
-        
-        sample_roi_stats_data = []
-
-        # Initialize a cumulative signature for previous parts
-        cumulative_snipe_sig = None
-
-        for i in range(n):
-            current_part = split_sigs[i]
-            
-            if cumulative_snipe_sig is None:
-                cumulative_snipe_sig = current_part
-                continue
-
-            # Add the current part to the cumulative signature
-            current_part_snipe_sig = cumulative_snipe_sig + current_part
-            
-            # Calculate the current part coverage
-            current_part_snipe_sig.add_reference_signature(self._reference_signature)
-            current_part_saturation = current_part_snipe_sig.reference_stats.saturation
-            current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
-            
-            # Calculate the cumulative saturation up to the previous part
-            cumulative_snipe_sig.add_reference_signature(self._reference_signature)
-            previous_parts_saturation = cumulative_snipe_sig.reference_stats.saturation
-            previous_parts_mean_abundance = cumulative_snipe_sig.reference_stats.mean_abundance
-            
-            # Calculate delta_saturation
-            delta_saturation = current_part_saturation - previous_parts_saturation
-            
-            stats = {
-                'current_part_saturation': current_part_saturation,
-                'previous_mean_abundance': previous_parts_mean_abundance,
-                'delta_saturation': delta_saturation
-            }
-            
-            sample_roi_stats_data.append(stats)
-            
-            # Update the cumulative signature to include the current part
-            cumulative_snipe_sig += current_part
-        
-        # keep the genomic roi stats data for further analysis
-        self.genomic_roi_stats_data = sample_roi_stats_data
-        return sample_roi_stats_data
+        return self.calculate_genomic_roi_pre_split(split_sigs)
     
     def get_genomic_roi_stats(self):
         if not self.genomic_roi_stats_data:
             raise ValueError("Genomic ROI stats data is not available.")
         
         # wasm-friendly format
-        return {x['previous_mean_abundance']: x['delta_saturation'] for x in self.genomic_roi_stats_data}
+        return {x['previous_mean_abundance']: x['delta_coverage_index'] for x in self.genomic_roi_stats_data}
     
     
     def calculate_amplicon_roi(self, n = 30):
@@ -945,21 +948,21 @@ class Signature:
             
             # Calculate the current part coverage
             current_part_snipe_sig.add_reference_signature(self._reference_signature)
-            current_part_saturation = current_part_snipe_sig.reference_stats.saturation
+            current_part_coverage_index = current_part_snipe_sig.reference_stats.coverage_index
             current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
             
-            # Calculate the cumulative saturation up to the previous part
+            # Calculate the cumulative coverage_index up to the previous part
             cumulative_snipe_sig.add_reference_signature(self._reference_signature)
-            previous_parts_saturation = cumulative_snipe_sig.reference_stats.saturation
+            previous_parts_coverage_index = cumulative_snipe_sig.reference_stats.coverage_index
             previous_parts_mean_abundance = cumulative_snipe_sig.reference_stats.mean_abundance
             
-            # Calculate delta_saturation
-            delta_saturation = current_part_saturation - previous_parts_saturation
+            # Calculate delta_coverage_index
+            delta_coverage_index = current_part_coverage_index - previous_parts_coverage_index
             
             stats = {
-                'current_part_saturation': current_part_saturation,
+                'current_part_coverage_index': current_part_coverage_index,
                 'previous_mean_abundance': previous_parts_mean_abundance,
-                'delta_saturation': delta_saturation
+                'delta_coverage_index': delta_coverage_index
             }
             
             sample_roi_stats_data.append(stats)
@@ -970,16 +973,15 @@ class Signature:
         # keep the genomic roi stats data for further analysis
         self.genomic_roi_stats_data = sample_roi_stats_data
         return sample_roi_stats_data
-        
+    
 
-
-    def predict_ROI(self, df, n_predict, show_plot=False):
+    def _predict_ROI(self, df, n_predict, show_plot=False):
         if n_predict <= len(df):
             raise ValueError(f"n_predict must be greater than the number of training points. Required: more than {len(df)}, Provided: {n_predict}")
         
         # Train with all available data points
         X_train = df[['previous_mean_abundance']]
-        y_train = np.log(df['delta_saturation'])
+        y_train = np.log(df['delta_coverage_index'])
         
         model = LinearRegression()
         model.fit(X_train, y_train)
@@ -995,10 +997,11 @@ class Signature:
         
         # Print the extra increase in the x-axis
         extra_increase = extrapolated_values[-1] - last_known_value
-        print(f"Extra increase in x-axis to achieve new coverage: {extra_increase}")
+        # print(f"Extra increase in x-axis to achieve new coverage: {extra_increase}")
         
         extrapolated_values = extrapolated_values.reshape(-1, 1)
-        y_pred_extrapolated = np.exp(model.predict(extrapolated_values))
+        extrapolated_values_df = pd.DataFrame(extrapolated_values, columns=['previous_mean_abundance'])
+        y_pred_extrapolated = np.exp(model.predict(extrapolated_values_df))
         
         if show_plot:
             plt.figure(figsize=(10, 6))
@@ -1006,12 +1009,12 @@ class Signature:
             plt.scatter(extrapolated_values, y_pred_extrapolated, color='purple', marker='x', label='Extrapolated points')
             
             # Plot the complete line
-            X_all_extended = pd.concat([X_train, pd.DataFrame(extrapolated_values, columns=['previous_mean_abundance'])])
+            X_all_extended = pd.concat([X_train, extrapolated_values_df])
             y_all_extended = np.concatenate([np.exp(y_train), y_pred_extrapolated])
             plt.plot(X_all_extended, y_all_extended, color='orange', label='Model prediction curve')
             
             plt.xlabel('Previous Mean Abundance')
-            plt.ylabel('Delta Saturation')
+            plt.ylabel('Delta coverage_index')
             plt.title('Training and Extrapolated Data Points')
             plt.legend()
             plt.grid(True)
@@ -1019,20 +1022,29 @@ class Signature:
         
         extrapolated_data = pd.DataFrame({
             'previous_mean_abundance': extrapolated_values.flatten(),
-            'delta_saturation': y_pred_extrapolated
+            'delta_coverage_index': y_pred_extrapolated
         })
         
-        # Calculate the final saturation
-        last_known_saturation = df.iloc[-1]['current_part_saturation']
-        extrapolated_data['cumulative_saturation'] = last_known_saturation + extrapolated_data['delta_saturation'].cumsum()
+        # Calculate the final coverage_index
+        last_known_coverage_index = df.iloc[-1]['current_part_coverage_index']
+        extrapolated_data['cumulative_coverage_index'] = last_known_coverage_index + extrapolated_data['delta_coverage_index'].cumsum()
         
-        final_saturation = extrapolated_data.iloc[-1]['cumulative_saturation']
+        final_coverage_index = extrapolated_data.iloc[-1]['cumulative_coverage_index']
         
         combined_data = pd.concat([df, extrapolated_data]).reset_index(drop=True)
         
         predicted_points = {
             'x': extrapolated_data['previous_mean_abundance'].tolist(),
-            'y': extrapolated_data['cumulative_saturation'].tolist()
+            'y': extrapolated_data['cumulative_coverage_index'].tolist()
         }
         
-        return predicted_points, combined_data, final_saturation
+        return predicted_points, combined_data, final_coverage_index, extra_increase
+    
+    def predict_genomic_roi(self, n_predict, show_plot=False):
+        if not self.genomic_roi_stats_data:
+            raise ValueError("Genomic ROI stats data is not available.")
+        
+        df = pd.DataFrame(self.genomic_roi_stats_data)
+        predicted_points, combined_data, final_coverage_index, extra_increase = self._predict_ROI(df, n_predict, show_plot)
+        
+        return extra_increase, final_coverage_index
