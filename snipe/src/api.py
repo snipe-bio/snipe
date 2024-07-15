@@ -331,7 +331,7 @@ class Signature:
         self.reference_stats = None
         self.amplicon_stats = {}
         self.genomic_roi_stats_data = None
-        self.amplicons_roi_stats_data = None
+        self.amplicons_roi_stats_data = {}
         
         
 
@@ -443,9 +443,11 @@ class Signature:
         self.reference_stats = ref_stats
         
         return True
-        
-        
-    def add_amplicon_signature(self, amplicon_signature, name: str = None):
+
+
+    def add_amplicon_signature(self, amplicon_signature, custom_name: str = None):
+        # TODO: make strong action for amplicon signature name settiing
+        # TODO: change custom_name to a more meaningful name
         if not self._reference_signature:
             raise ValueError("Reference signature must be set before adding amplicon signatures.")
         if self.scale != amplicon_signature.scale:
@@ -454,7 +456,7 @@ class Signature:
             raise ValueError("ksize must be the same")
         if amplicon_signature.type != SigType.AMPLICON:
             raise ValueError("Amplicon signature must be of type AMPLICON")        
-        amplicon_name = amplicon_signature.name
+        amplicon_name = custom_name if custom_name else amplicon_signature.name
         # make sure there is no duplicate name or checksum
         if amplicon_name not in self._amplicon_signatures:
             # no duplicate mdsum either in dictionary values
@@ -509,7 +511,7 @@ class Signature:
         # make sure all stats are set
         amplicon_stats.check_all_stats()
         
-        _amplicon_final_name = name if name else amplicon_name
+        _amplicon_final_name = custom_name if custom_name else amplicon_name
         
         # make sure there is no duplicate name or checksum
         if _amplicon_final_name in self.amplicon_stats:
@@ -843,7 +845,15 @@ class Signature:
         ]
         return split_sigs
     
-    def calculate_genomic_roi_pre_split(self, split_sigs):
+
+    # return on investment ROI calculation
+    def calculate_genomic_roi(self, n = 30):
+        # check if the signature has a reference signature
+        if not self._reference_signature:
+            _err = "Reference signature must be set before calculating ROI."
+            raise ValueError(_err)
+        
+        split_sigs = self.split_sig_randomly(n)
         sample_roi_stats_data = []
 
         # Initialize a cumulative signature for previous parts
@@ -886,26 +896,6 @@ class Signature:
         # keep the genomic roi stats data for further analysis
         self.genomic_roi_stats_data = sample_roi_stats_data
         return sample_roi_stats_data
-        
-    
-
-    # return on investment ROI calculation
-    def calculate_genomic_roi(self, n = 30):
-        # check if the signature has a reference signature
-        if not self._reference_signature:
-            _err = "Reference signature must be set before calculating ROI."
-            raise ValueError(_err)
-
-        # Split the signature into n random signatures
-        # hash_to_abund = dict(zip(self.hashes, self.abundances))
-        # random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
-        # # split_sigs = [
-        #     self._create_new_signature(np.array(list(x.keys()), dtype=np.uint64), np.array(list(x.values()), dtype=np.uint64), f"ROI_{i}")
-        #     for i, x in enumerate(random_split_sigs)
-        # ]
-        
-        split_sigs = self.split_sig_randomly(n)
-        return self.calculate_genomic_roi_pre_split(split_sigs)
     
     def get_genomic_roi_stats(self):
         if not self.genomic_roi_stats_data:
@@ -914,28 +904,45 @@ class Signature:
         # wasm-friendly format
         return {x['previous_mean_abundance']: x['delta_coverage_index'] for x in self.genomic_roi_stats_data}
     
-    
-    def calculate_amplicon_roi(self, n = 30):
-        # TODO: implement amplicon ROI calculation
+    def get_amplicon_roi_stats(self, amplicon_name= None):
         
+        if not self.amplicons_roi_stats_data:
+            raise ValueError("Amplicon stats are not available.")
+        if not amplicon_name and len(self.amplicons_roi_stats_data) == 1:
+            amplicon_name = list(self.amplicons_roi_stats_data.keys())[0]
+        elif amplicon_name:
+            if amplicon_name not in self.amplicons_roi_stats_data:
+                raise ValueError(f"Amplicon '{amplicon_name}' is not found. Available amplicons are: {list(self.amplicons_roi_stats_data.keys())}")
+
+        
+        # wasm-friendly format
+        return {x['previous_mean_abundance']: x['delta_coverage_index'] for x in self.amplicons_roi_stats_data[amplicon_name]}
+    
+    
+    def calculate_exome_roi(self, amplicon_name = None, n = 30):
         # check if the signature has a reference signature
         if not self._reference_signature:
             _err = "Reference signature must be set before calculating ROI."
             raise ValueError(_err)
-
-        # Split the signature into n random signatures
-        hash_to_abund = dict(zip(self.hashes, self.abundances))
-        random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
-        split_sigs = [
-            self._create_new_signature(np.array(list(x.keys()), dtype=np.uint64), np.array(list(x.values()), dtype=np.uint64), f"ROI_{i}")
-            for i, x in enumerate(random_split_sigs)
-        ]
         
+        split_sigs = self.split_sig_randomly(n)
         sample_roi_stats_data = []
+        
+        AMPLICON_SIGNATURE_for_ROI = None
+                
+        if not len(self._amplicon_signatures):
+            raise ValueError("At least one amplicon signatures must be added before calculating ROI.")
+        if not amplicon_name and len(self._amplicon_signatures) == 1:
+            amplicon_name = list(self._amplicon_signatures.keys())[0]
+        elif amplicon_name:
+            if amplicon_name not in self._amplicon_signatures:
+                raise ValueError(f"Amplicon signature '{amplicon_name}' is not found. Available amplicons are: {list(self._amplicon_signatures.keys())}")
+            else:
+                AMPLICON_SIGNATURE_for_ROI = self._amplicon_signatures[amplicon_name]
 
         # Initialize a cumulative signature for previous parts
         cumulative_snipe_sig = None
-
+        n = len(split_sigs)
         for i in range(n):
             current_part = split_sigs[i]
             
@@ -947,14 +954,18 @@ class Signature:
             current_part_snipe_sig = cumulative_snipe_sig + current_part
             
             # Calculate the current part coverage
+            # TODO: prevent adding the reference/amplicon signature multiple times
             current_part_snipe_sig.add_reference_signature(self._reference_signature)
-            current_part_coverage_index = current_part_snipe_sig.reference_stats.coverage_index
-            current_part_mean_abundance = current_part_snipe_sig.reference_stats.mean_abundance
+            current_part_snipe_sig.add_amplicon_signature(AMPLICON_SIGNATURE_for_ROI, "amplicon")
+            
+            current_part_coverage_index = current_part_snipe_sig.amplicon_stats["amplicon"].coverage_index
+            current_part_mean_abundance = current_part_snipe_sig.amplicon_stats["amplicon"].mean_abundance
             
             # Calculate the cumulative coverage_index up to the previous part
             cumulative_snipe_sig.add_reference_signature(self._reference_signature)
-            previous_parts_coverage_index = cumulative_snipe_sig.reference_stats.coverage_index
-            previous_parts_mean_abundance = cumulative_snipe_sig.reference_stats.mean_abundance
+            cumulative_snipe_sig.add_amplicon_signature(AMPLICON_SIGNATURE_for_ROI, "amplicon")
+            previous_parts_coverage_index = cumulative_snipe_sig.amplicon_stats["amplicon"].coverage_index
+            previous_parts_mean_abundance = cumulative_snipe_sig.amplicon_stats["amplicon"].mean_abundance
             
             # Calculate delta_coverage_index
             delta_coverage_index = current_part_coverage_index - previous_parts_coverage_index
@@ -971,7 +982,7 @@ class Signature:
             cumulative_snipe_sig += current_part
         
         # keep the genomic roi stats data for further analysis
-        self.genomic_roi_stats_data = sample_roi_stats_data
+        self.amplicons_roi_stats_data[amplicon_name] = sample_roi_stats_data
         return sample_roi_stats_data
     
 
