@@ -918,7 +918,7 @@ class Signature:
         # wasm-friendly format
         return {x['previous_mean_abundance']: x['delta_coverage_index'] for x in self.amplicons_roi_stats_data[amplicon_name]}
     
-    
+    # TODO change the name to calculate_amplicon_roi
     def calculate_exome_roi(self, amplicon_name = None, n = 30):
         # check if the signature has a reference signature
         if not self._reference_signature:
@@ -989,27 +989,38 @@ class Signature:
     def _predict_ROI(self, df, n_predict, show_plot=False):
         if n_predict <= len(df):
             raise ValueError(f"n_predict must be greater than the number of training points. Required: more than {len(df)}, Provided: {n_predict}")
+
+        # Check for and handle infinity or NaN values
+        if not np.isfinite(df['delta_coverage_index']).all():
+            raise ValueError("Input 'delta_coverage_index' contains infinity or NaN values.")
         
+        # Handle zero values by adding a small constant
+        df['delta_coverage_index'] = df['delta_coverage_index'].replace(0, np.nan)
+        df['delta_coverage_index'] = df['delta_coverage_index'].ffill()
+        
+        if (df['delta_coverage_index'] <= 0).any():
+            raise ValueError("Input 'delta_coverage_index' must be positive after zero handling.")
+
         # Train with all available data points
         X_train = df[['previous_mean_abundance']]
         y_train = np.log(df['delta_coverage_index'])
-        
+
         model = LinearRegression()
         model.fit(X_train, y_train)
-        
+
         # Calculate the average distance between points on the x-axis
         x_values = df['previous_mean_abundance'].values
         average_distance = np.mean(np.diff(x_values))
-        
+
         # Generate the x-values for extrapolation
         last_known_value = x_values[-1]
         n_extra = n_predict - len(df)
         extrapolated_values = np.arange(1, n_extra + 1) * average_distance + last_known_value
-        
+
         # Print the extra increase in the x-axis
         extra_increase = extrapolated_values[-1] - last_known_value
         # print(f"Extra increase in x-axis to achieve new coverage: {extra_increase}")
-        
+
         extrapolated_values = extrapolated_values.reshape(-1, 1)
         extrapolated_values_df = pd.DataFrame(extrapolated_values, columns=['previous_mean_abundance'])
         y_pred_extrapolated = np.exp(model.predict(extrapolated_values_df))
@@ -1056,6 +1067,17 @@ class Signature:
             raise ValueError("Genomic ROI stats data is not available.")
         
         df = pd.DataFrame(self.genomic_roi_stats_data)
+        predicted_points, combined_data, final_coverage_index, extra_increase = self._predict_ROI(df, n_predict, show_plot)
+        
+        return extra_increase, final_coverage_index
+    
+    def predict_amplicon_roi(self, amplicon_name, n_predict, show_plot=False):
+        if not self.amplicons_roi_stats_data:
+            raise ValueError("Amplicon stats are not available.")
+        if amplicon_name not in self.amplicons_roi_stats_data:
+            raise ValueError(f"Amplicon '{amplicon_name}' is not found. Available amplicons are: {list(self.amplicons_roi_stats_data.keys())}")
+        
+        df = pd.DataFrame(self.amplicons_roi_stats_data[amplicon_name])
         predicted_points, combined_data, final_coverage_index, extra_increase = self._predict_ROI(df, n_predict, show_plot)
         
         return extra_increase, final_coverage_index
