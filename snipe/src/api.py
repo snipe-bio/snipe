@@ -845,6 +845,29 @@ class Signature:
         ]
         return split_sigs
     
+    def reset_abundance(self, new_abundance = 1):
+        # this function set the abundance for all hashes of the signature to a new value
+        self._abundances = np.full_like(self._abundances, new_abundance)
+
+
+    def select_kmers_min_abund(self, min_abundance):
+        # keep only k-mers with abundance >= min_abundance
+        mask = self._abundances >= min_abundance
+        self._hashes = self._hashes[mask]
+        self._abundances = self._abundances[mask]
+        if not len(self._hashes):
+            raise ValueError("No k-mers found with abundance >= min_abundance.")
+        self._checksum()
+        
+    def select_kmers_max_abund(self, max_abundance):
+        # keep only k-mers with abundance <= max_abundance
+        mask = self._abundances <= max_abundance
+        self._hashes = self._hashes[mask]
+        self._abundances = self._abundances[mask]
+        if not len(self._hashes):
+            raise ValueError("No k-mers found with abundance <= max_abundance.")
+        self._checksum()
+    
 
     # return on investment ROI calculation
     def calculate_genomic_roi(self, n = 30):
@@ -1081,3 +1104,47 @@ class Signature:
         predicted_points, combined_data, final_coverage_index, extra_increase = self._predict_ROI(df, n_predict, show_plot)
         
         return extra_increase, final_coverage_index
+
+class Pangenome:
+    def __init__(self):
+        self._kSize = None
+        self._quantitative_sig = None
+        self._scale = None
+        # counts how many signatures we added
+        self._sigs_counter = 0
+    
+    
+    def add_signature(self, signature):
+        if not isinstance(signature, Signature):
+            raise ValueError("Signature must be an instance of Signature.")
+
+        # reset the abundance of the signature to 1
+        signature.reset_abundance(new_abundance=1)
+        
+        if self._quantitative_sig is None:
+            self._quantitative_sig = signature
+            self._kSize = signature.k_size
+            self._scale = signature.scale
+        
+        else:
+            if self._kSize != signature.k_size:
+                raise ValueError("ksize must be the same")
+            if self._scale != signature.scale:
+                raise ValueError("scale must be the same")
+            self._quantitative_sig += signature
+        
+        self._sigs_counter += 1
+
+
+    def get_pangenome_signature(self, percentage = 1.0):
+        if self._sigs_counter <= 0:
+            raise ValueError("At least one signature must be added to the pangenome.")
+        
+        if percentage < 0.1 or percentage > 100:
+            raise ValueError("Percentage must be between 0.1 and 100.")
+
+        min_abund_threshold = int(self._sigs_counter * percentage / 100)
+        return self._quantitative_sig.select_kmers_min_abund(min_abund_threshold)
+        
+        
+        
