@@ -847,7 +847,7 @@ class Signature:
     
     def reset_abundance(self, new_abundance = 1):
         # this function set the abundance for all hashes of the signature to a new value
-        self._abundances = np.full_like(self._abundances, new_abundance)
+        self._abundances = np.full_like(self._hashes, new_abundance)
 
 
     def select_kmers_min_abund(self, min_abundance):
