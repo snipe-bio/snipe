@@ -128,7 +128,6 @@ dependencies = [
     "mkdocs-jupyter>=0.25.0",
 ]
 [tool.hatch.envs.docs.scripts]
-# mkdocs.yml is in docs/
 build = "mkdocs build --config-file=docs/mkdocs.yml"
 serve = "mkdocs serve"
 watch = "mkdocs serve --dev-addr=0.0.0.0:8000"
@@ -143,4 +142,4 @@ include = ["README.md", "LICENSE", "pyproject.toml", "src/snipe/**"]
 include = ["README.md", "LICENSE", "pyproject.toml", "src/snipe/**"]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.11", "3.12"]
+python = ["3.11", "3.12", "3.13"]
