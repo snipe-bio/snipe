@@ -7,7 +7,9 @@ import unittest
 import numpy as np
 import sourmash as smash
 
-from snipe.api import SigType, SnipeSig, ReferenceQC
+from snipe.api import SnipeSig
+from snipe.api.enums import SigType
+from snipe.api.reference_QC import ReferenceQC
 
 def sample_signature_json():
     """
@@ -79,11 +81,11 @@ class TestSnipeSig(unittest.TestCase):
 
         # Create SnipeSig instances
         self.snipe_sig = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         self.snipe_sig_2 = SnipeSig(
-            sourmashSig=self.sample_sig_2,
+            sourmash_sig=self.sample_sig_2,
             enable_logging=False
         )
 
@@ -92,7 +94,7 @@ class TestSnipeSig(unittest.TestCase):
         Test initialization of SnipeSig from a SourmashSignature object.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         self.assertEqual(snipe.name, "test_signature")
@@ -111,7 +113,7 @@ class TestSnipeSig(unittest.TestCase):
         Test initialization of SnipeSig from a JSON string.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_json,
+            sourmash_sig=self.sample_json,
             enable_logging=False
         )
         self.assertEqual(snipe.name, "test_signature")
@@ -134,7 +136,7 @@ class TestSnipeSig(unittest.TestCase):
             tmp_file_path = tmp_file.name
         try:
             snipe = SnipeSig(
-                sourmashSig=tmp_file_path,
+                sourmash_sig=tmp_file_path,
                 enable_logging=False
             )
             self.assertEqual(snipe.name, "test_signature")
@@ -152,11 +154,11 @@ class TestSnipeSig(unittest.TestCase):
 
     def test_init_invalid_input_type(self):
         """
-        Test initialization with an invalid input type for sourmashSig.
+        Test initialization with an invalid input type for sourmash_sig.
         """
         with self.assertRaises(TypeError):
             SnipeSig(
-                sourmashSig=12345,  # Invalid type
+                sourmash_sig=12345,  # Invalid type
                 enable_logging=False
             )
 
@@ -167,7 +169,7 @@ class TestSnipeSig(unittest.TestCase):
         invalid_json = '{"invalid": "json"}'
         with self.assertRaises(ValueError):
             SnipeSig(
-                sourmashSig=invalid_json,
+                sourmash_sig=invalid_json,
                 enable_logging=False
             )
 
@@ -226,7 +228,7 @@ class TestSnipeSig(unittest.TestCase):
         """
         expected_repr = (
             "SnipeSig(name=test_signature, ksize=31, scale=1, "
-            "type=SAMPLE, num_hashes=5)"
+            "type=SigType.SAMPLE, num_hashes=5)"
         )
         self.assertEqual(repr(self.snipe_sig), expected_repr)
         self.assertEqual(str(self.snipe_sig), expected_repr)
@@ -290,7 +292,7 @@ class TestSnipeSig(unittest.TestCase):
         """
         # Create a signature identical to snipe_sig
         sig_copy = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         with self.assertRaises(RuntimeError):
@@ -312,7 +314,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the overloaded += operator for in-place union of two signatures.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         snipe += self.snipe_sig_2
@@ -337,7 +339,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the overloaded -= operator for in-place difference of two signatures.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         snipe -= self.snipe_sig_2
@@ -362,7 +364,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the overloaded |= operator for in-place union of two signatures.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         snipe |= self.snipe_sig_2
@@ -387,7 +389,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the overloaded ^= operator for in-place symmetric difference of two signatures.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         snipe ^= self.snipe_sig_2
@@ -427,7 +429,7 @@ class TestSnipeSig(unittest.TestCase):
         ])
         sig3 = smash.load_one_signature_from_json(sig3_json)
         snipe_sig3 = SnipeSig(
-            sourmashSig=sig3,
+            sourmash_sig=sig3,
             enable_logging=False
         )
 
@@ -486,7 +488,7 @@ class TestSnipeSig(unittest.TestCase):
         ])
         sig_diff_ksize = smash.load_one_signature_from_json(sig_diff_ksize_json)
         snipe_diff_ksize = SnipeSig(
-            sourmashSig=sig_diff_ksize,
+            sourmash_sig=sig_diff_ksize,
             enable_logging=False
         )
 
@@ -532,9 +534,10 @@ class TestSnipeSig(unittest.TestCase):
             "ksize": 31,
             "scale": 1,
             "track_abundance": True,
-            "sigtype": "SAMPLE",
+            "sigtype": SigType.SAMPLE,
             "num_hashes": 5
         }
+
         self.assertEqual(info, expected_info)
 
     def test_get_name(self):
@@ -573,7 +576,7 @@ class TestSnipeSig(unittest.TestCase):
         ])
         sig_diff_ksize = smash.load_one_signature_from_json(sig_diff_ksize_json)
         snipe_diff_ksize = SnipeSig(
-            sourmashSig=sig_diff_ksize,
+            sourmash_sig=sig_diff_ksize,
             enable_logging=False
         )
 
@@ -662,7 +665,7 @@ class TestSnipeSig(unittest.TestCase):
         """
         # Manually shuffle the hashes to make them unsorted after masking
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         snipe._hashes = np.array([30, 10, 50], dtype=np.uint64)  # Unsorted
@@ -691,7 +694,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         expected_abundances = np.ones(5, dtype=np.uint32)
@@ -703,7 +706,7 @@ class TestSnipeSig(unittest.TestCase):
         Test that logging is enabled when enable_logging=True.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=True
         )
         self.assertEqual(snipe.logger.level, logging.DEBUG)
@@ -715,7 +718,7 @@ class TestSnipeSig(unittest.TestCase):
         Test that logging is disabled when enable_logging=False.
         """
         snipe = SnipeSig(
-            sourmashSig=self.sample_sig,
+            sourmash_sig=self.sample_sig,
             enable_logging=False
         )
         self.assertEqual(snipe.logger.level, logging.CRITICAL)
@@ -760,7 +763,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -804,7 +807,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -848,7 +851,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -901,7 +904,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -951,7 +954,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -1011,7 +1014,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -1057,7 +1060,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -1103,7 +1106,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -1149,7 +1152,7 @@ class TestSnipeSig(unittest.TestCase):
             filename="-"
         )
         snipe_no_abund = SnipeSig(
-            sourmashSig=sig_no_abund,
+            sourmash_sig=sig_no_abund,
             enable_logging=False
         )
         with self.assertRaises(ValueError):
@@ -1163,8 +1166,8 @@ class TestReferenceQC(unittest.TestCase):
         # Sample signature (sample_sig)
         self.sample_json = sample_signature_json()
         self.sample_sig = SnipeSig(
-            sourmashSig=self.sample_json,
-            sigType=SigType.SAMPLE,
+            sourmash_sig=self.sample_json,
+            sig_type=SigType.SAMPLE,
             enable_logging=False
         )
 
@@ -1193,8 +1196,8 @@ class TestReferenceQC(unittest.TestCase):
             }
         ])
         self.reference_sig = SnipeSig(
-            sourmashSig=self.reference_json,
-            sigType=SigType.GENOME,
+            sourmash_sig=self.reference_json,
+            sig_type=SigType.GENOME,
             enable_logging=False
         )
 
@@ -1223,8 +1226,8 @@ class TestReferenceQC(unittest.TestCase):
             }
         ])
         self.amplicon_sig = SnipeSig(
-            sourmashSig=self.amplicon_json,
-            sigType=SigType.AMPLICON,
+            sourmash_sig=self.amplicon_json,
+            sig_type=SigType.AMPLICON,
             enable_logging=False
         )
 

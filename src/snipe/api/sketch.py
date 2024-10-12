@@ -9,10 +9,10 @@ import threading
 import queue
 from typing import Any, Dict, List, Optional, Tuple
 
-import pyfastx
+from pyfastx import Fastx as SequenceReader
 import sourmash
 from pathos.multiprocessing import ProcessingPool as Pool
-from snipe.api import ReferenceQC, SigType, SnipeSig
+from snipe.api import SigType, SnipeSig
 
 
 class SnipeSketch:
@@ -87,7 +87,7 @@ class SnipeSketch:
         """
         self._register_signal_handler()
         try:
-            fa_reader = pyfastx.Fastx(fasta_file)
+            fa_reader = SequenceReader(fasta_file)
             mh = sourmash.MinHash(
                 n=0, ksize=ksize, scaled=scaled, track_abundance=True
             )
@@ -106,7 +106,7 @@ class SnipeSketch:
                 progress_queue.put(local_count)
 
             self.logger.debug(
-                f"Thread {thread_id} processed {len(mh)} hashes."
+                "Thread %d processed %d hashes.", thread_id, len(mh)
             )
             return mh
 
@@ -164,7 +164,7 @@ class SnipeSketch:
             signum (int): Signal number.
             frame (Any): Current stack frame.
         """
-        self.logger.info(f"Received signal {signum}. Exiting worker.")
+        self.logger.info("Received signal %d. Exiting worker.", signum)
         sys.exit(0)
 
     def _sketch_sample(
@@ -253,7 +253,7 @@ class SnipeSketch:
                 mh = result.get()
                 if mh:
                     minhashes.append(mh)
-                    self.logger.debug(f"MinHash from thread {idx} collected.")
+                    self.logger.debug("MinHash from thread %d collected.", idx)
             except Exception as e:
                 self.logger.error("Error retrieving MinHash from thread %d: %s", idx, e)
 
@@ -399,7 +399,7 @@ class SnipeSketch:
                 The full genome signature and a dictionary of chromosome signatures.
         """
         self.logger.info("Starting parallel genome sketching with %d cores.", cores)
-        fa_reader = pyfastx.Fastx(fasta_file, comment=True)
+        fa_reader = SequenceReader(fasta_file, comment=True)
         mh_full = sourmash.MinHash(n=0, ksize=ksize, scaled=scale)
         chr_to_mh: Dict[str, sourmash.MinHash] = {}
 
@@ -477,7 +477,7 @@ class SnipeSketch:
         """
         self.logger.info("Starting amplicon sketching for: %s", amplicon_name)
         try:
-            fa_reader = pyfastx.Fastx(fasta_file)
+            fa_reader = SequenceReader(fasta_file)
             mh_full = sourmash.MinHash(n=0, ksize=ksize, scaled=scale)
             for _, seq in fa_reader:
                 mh_full.add_sequence(seq, force=True)
@@ -512,7 +512,7 @@ class SnipeSketch:
         if not output_file.lower().endswith(".zip"):
             raise ValueError("Output file must have a .zip extension.")
 
-        if os.path.exists(output_file):
+        if os.path.exists(output_file): 
             raise FileExistsError("Output file already exists.")
 
         try:
