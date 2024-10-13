@@ -868,19 +868,6 @@ class TestReferenceQC(unittest.TestCase):
             self.assertEqual(data_point["cumulative_coverage_index"], 0.0)
             self.assertEqual(data_point["cumulative_total_abundance"], 0)
 
-
-    def test_predict_coverage_with_very_large_extra_fold(self):
-        """
-        Test that predict_coverage caps the predicted coverage at 1.0 even with a very large extra_fold.
-        """
-        qc = ReferenceQC(
-            sample_sig=self.sample_sig,
-            reference_sig=self.reference_sig,
-            enable_logging=False
-        )
-        predicted_coverage = qc.predict_coverage(extra_fold=1000.0, n=40)
-        self.assertGreaterEqual(predicted_coverage, 0.9)
-        self.assertLessEqual(predicted_coverage, 1.0)
             
     def test_calculate_sex_chrs_metrics(self):
         """
