@@ -80,7 +80,8 @@ plugins:
 nav:
   - Home: index.md
   - API:
-      - Overview: API.md
+      - SnipeSig: SnipeSig.md
+      - ReferenceQC: ReferenceQC.md
   - CLI: cli.md
 
 

@@ -878,7 +878,7 @@ class TestReferenceQC(unittest.TestCase):
             reference_sig=self.reference_sig,
             enable_logging=False
         )
-        predicted_coverage = qc.predict_coverage(extra_fold=1000.0, n=10)
+        predicted_coverage = qc.predict_coverage(extra_fold=1000.0, n=40)
         self.assertGreaterEqual(predicted_coverage, 0.9)
         self.assertLessEqual(predicted_coverage, 1.0)
             

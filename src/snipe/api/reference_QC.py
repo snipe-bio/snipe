@@ -235,7 +235,6 @@ class ReferenceQC:
 
     stats = qc.get_aggregated_stats(include_advanced=True)
     ```
-    ```
     """
 
     def __init__(self, *,
@@ -465,7 +464,6 @@ class ReferenceQC:
             aggregated_stats.update(self.amplicon_stats)
             aggregated_stats["Predicted Assay Type"] = self.predicted_assay_type
                     
-
         if self.chrs_stats:
             aggregated_stats.update(self.chrs_stats)
         
@@ -542,18 +540,111 @@ class ReferenceQC:
                 "Median-trimmed relative coverage": self.amplicon_stats["Median-trimmed relative coverage"],
                 "Median-trimmed relative mean abundance": self.amplicon_stats["Median-trimmed relative mean abundance"],
             })
+
+            self.advanced_stats.update(self.amplicon_stats)
+
+    def _calculate_advanced_stats(self):
+        r"""
+        Calculate advanced statistics, such as median-trimmed metrics.
+        """
+        self.logger.debug("Calculating advanced statistics.")
+
+        # Copy sample signature to avoid modifying the original
+        median_trimmed_sample_sig = self.sample_sig.copy()
+        # Trim below median
+        median_trimmed_sample_sig.trim_below_median()
+        # Get stats
+        median_trimmed_sample_stats = median_trimmed_sample_sig.get_sample_stats
+        self.advanced_stats.update({
+            "Median-trimmed unique k-mers": median_trimmed_sample_stats["num_hashes"],
+            "Median-trimmed total abundance": median_trimmed_sample_stats["total_abundance"],
+            "Median-trimmed mean abundance": median_trimmed_sample_stats["mean_abundance"],
+            "Median-trimmed median abundance": median_trimmed_sample_stats["median_abundance"],
+        })
+
+        # Genome stats for median-trimmed sample
+        median_trimmed_sample_genome = median_trimmed_sample_sig & self.reference_sig
+        median_trimmed_sample_genome_stats = median_trimmed_sample_genome.get_sample_stats
+        self.advanced_stats.update({
+            "Median-trimmed Genomic unique k-mers": median_trimmed_sample_genome_stats["num_hashes"],
+            "Median-trimmed Genomic total abundance": median_trimmed_sample_genome_stats["total_abundance"],
+            "Median-trimmed Genomic mean abundance": median_trimmed_sample_genome_stats["mean_abundance"],
+            "Median-trimmed Genomic median abundance": median_trimmed_sample_genome_stats["median_abundance"],
+            "Median-trimmed Genome coverage index": (
+                median_trimmed_sample_genome_stats["num_hashes"] / self.genome_sig_stats["num_hashes"]
+                if self.genome_sig_stats["num_hashes"] > 0 else 0
+            ),
+        })
+
+        if self.amplicon_sig is not None:
+            self.logger.debug("Calculating advanced amplicon statistics.")
+            # Amplicon stats for median-trimmed sample
+            median_trimmed_sample_amplicon = median_trimmed_sample_sig & self.amplicon_sig
+            median_trimmed_sample_amplicon_stats = median_trimmed_sample_amplicon.get_sample_stats
+            self.advanced_stats.update({
+                "Median-trimmed Amplicon unique k-mers": median_trimmed_sample_amplicon_stats["num_hashes"],
+                "Median-trimmed Amplicon total abundance": median_trimmed_sample_amplicon_stats["total_abundance"],
+                "Median-trimmed Amplicon mean abundance": median_trimmed_sample_amplicon_stats["mean_abundance"],
+                "Median-trimmed Amplicon median abundance": median_trimmed_sample_amplicon_stats["median_abundance"],
+                "Median-trimmed Amplicon coverage index": (
+                    median_trimmed_sample_amplicon_stats["num_hashes"] / self.amplicon_sig_stats["num_hashes"]
+                    if self.amplicon_sig_stats["num_hashes"] > 0 else 0
+                ),
+            })
+            # Additional advanced relative metrics
+            self.logger.debug("Calculating advanced relative metrics.")
+            self.amplicon_stats["Median-trimmed relative coverage"] = (
+                self.advanced_stats["Median-trimmed Amplicon coverage index"] / self.advanced_stats["Median-trimmed Genome coverage index"]
+                if self.advanced_stats["Median-trimmed Genome coverage index"] > 0 else 0
+            )
+            self.amplicon_stats["Median-trimmed relative mean abundance"] = (
+                self.advanced_stats["Median-trimmed Amplicon mean abundance"] / self.advanced_stats["Median-trimmed Genomic mean abundance"]
+                if self.advanced_stats["Median-trimmed Genomic mean abundance"] > 0 else 0
+            )
+            # Update amplicon_stats with advanced metrics
+            self.amplicon_stats.update({
+                "Median-trimmed relative coverage": self.amplicon_stats["Median-trimmed relative coverage"],
+                "Median-trimmed relative mean abundance": self.amplicon_stats["Median-trimmed relative mean abundance"],
+            })
             
             self.advanced_stats.update(self.amplicon_stats)
 
     def split_sig_randomly(self, n: int) -> List[SnipeSig]:
-        """
+        r"""
         Split the sample signature into `n` random parts based on abundances.
 
-        Parameters:
-            n (int): Number of parts to split into.
+        This method distributes the k-mers of the sample signature into `n` parts using a multinomial distribution
+        based on their abundances. Each k-mer's abundance is split across the `n` parts proportionally.
 
-        Returns:
-            List[SnipeSig]: List of `SnipeSig` instances representing the split parts.
+        **Mathematical Explanation**:
+
+        For each k-mer with hash \( h \) and abundance \( a_h \), its abundance is distributed into \( n \) parts
+        according to a multinomial distribution. Specifically, the abundance in each part \( i \) is given by:
+
+        $$
+        a_{h,i} \sim \text{Multinomial}(a_h, \frac{1}{n}, \frac{1}{n}, \dots, \frac{1}{n})
+        $$
+
+        Where:
+        - \( a_{h,i} \) is the abundance of k-mer \( h \) in part \( i \).
+        - Each \( a_{h,i} \) is a non-negative integer such that \( \sum_{i=1}^{n} a_{h,i} = a_h \).
+
+        **Parameters**:
+
+        - `n` (`int`): Number of parts to split into.
+
+        **Returns**:
+
+        - `List[SnipeSig]`:  
+          List of `SnipeSig` instances representing the split parts.
+
+        **Usage Example**:
+
+        ```python
+        split_sigs = qc.split_sig_randomly(n=3)
+        for idx, sig in enumerate(split_sigs, 1):
+            print(f"Signature part {idx}: {sig}")
+        ```
         """
         self.logger.debug("Splitting sample signature into %d random parts.", n)
         # Get k-mers and abundances
@@ -572,18 +663,41 @@ class ReferenceQC:
             for i, kmer_dict in enumerate(random_split_sigs)
         ]
         return split_sigs
-
+    
     @staticmethod
     def distribute_kmers_random(original_dict: Dict[int, int], n: int) -> List[Dict[int, int]]:
-        """
+        r"""
         Distribute the k-mers randomly into `n` parts based on their abundances.
 
-        Parameters:
-            original_dict (Dict[int, int]): Dictionary mapping k-mer hashes to their abundances.
-            n (int): Number of parts to split into.
+        This helper method performs the actual distribution of k-mers using a multinomial distribution.
 
-        Returns:
-            List[Dict[int, int]]: List of dictionaries, each mapping k-mer hashes to their abundances.
+        **Mathematical Explanation**:
+
+        Given a k-mer with hash \( h \) and abundance \( a_h \), the distribution of its abundance across \( n \)
+        parts is modeled as:
+
+        $$
+        a_{h,1}, a_{h,2}, \dots, a_{h,n} \sim \text{Multinomial}(a_h, p_1, p_2, \dots, p_n)
+        $$
+
+        Where \( p_i = \frac{1}{n} \) for all \( i \).
+
+        **Parameters**:
+
+        - `original_dict` (`Dict[int, int]`):  
+          Dictionary mapping k-mer hashes to their abundances.
+        - `n` (`int`): Number of parts to split into.
+
+        **Returns**:
+
+        - `List[Dict[int, int]]`:  
+          List of dictionaries, each mapping k-mer hashes to their abundances in that part.
+
+        **Usage Example**:
+
+        ```python
+        distributed = ReferenceQC.distribute_kmers_random(hash_to_abund, n=3)
+        ```
         """
         # Initialize the resulting dictionaries
         distributed_dicts = [{} for _ in range(n)]
@@ -602,14 +716,47 @@ class ReferenceQC:
         return distributed_dicts
 
     def calculate_coverage_vs_depth(self, n: int = 30) -> List[Dict[str, Any]]:
-        """
+        r"""
         Calculate cumulative coverage index vs cumulative sequencing depth.
 
-        Parameters:
-            n (int): Number of parts to split the signature into.
+        This method simulates incremental sequencing by splitting the sample signature into `n` parts and
+        calculating the cumulative coverage index at each step. It helps in understanding how coverage
+        improves with increased sequencing depth.
 
-        Returns:
-            List[Dict[str, Any]]: List of stats for each cumulative part.
+        **Mathematical Explanation**:
+
+        For each cumulative part \( i \) (where \( 1 \leq i \leq n \)):
+
+        - **Cumulative Sequencing Depth** (\( D_i \)):
+          $$
+          D_i = \sum_{j=1}^{i} a_j
+          $$
+          Where \( a_j \) is the total abundance of the \( j^{th} \) part.
+
+        - **Cumulative Coverage Index** (\( C_i \)):
+          $$
+          C_i = \frac{\text{Number of genomic unique k-mers in first } i \text{ parts}}{\left| \text{Reference genome k-mer set} \right|}
+          $$
+
+        **Parameters**:
+
+        - `n` (`int`): Number of parts to split the signature into.
+
+        **Returns**:
+
+        - `List[Dict[str, Any]]`:  
+          List of dictionaries containing:
+            - `"cumulative_parts"` (`int`): Number of parts included.
+            - `"cumulative_total_abundance"` (`int`): Total sequencing depth up to this part.
+            - `"cumulative_coverage_index"` (`float`): Coverage index up to this part.
+
+        **Usage Example**:
+
+        ```python
+        coverage_depth_data = qc.calculate_coverage_vs_depth(n=10)
+        for data in coverage_depth_data:
+            print(data)
+        ```
         """
         self.logger.debug("Calculating coverage vs depth with %d parts.", n)
         # Determine the ROI reference signature
@@ -627,7 +774,7 @@ class ReferenceQC:
 
         cumulative_snipe_sig = split_sigs[0].copy()
         cumulative_total_abundance = cumulative_snipe_sig.total_abundance
-        
+
         #! force conversion to GENOME
         roi_reference_sig.sigtype = SigType.GENOME
 
@@ -698,7 +845,7 @@ class ReferenceQC:
         The coverage index \( C \) as a function of sequencing depth \( D \) is modeled using the function:
 
         $$
-        C(D) = \\frac{a \cdot D}{b + D}
+        C(D) = \frac{a \cdot D}{b + D}
         $$
 
         Where:
@@ -719,26 +866,26 @@ class ReferenceQC:
         $$
 
         $$
-        C_{\text{pred}} = \\frac{a \cdot D_{\text{pred}}}{b + D_{\text{pred}}}
+        C_{\text{pred}} = \frac{a \cdot D_{\text{pred}}}{b + D_{\text{pred}}}
         $$
 
         **Parameters**:
             
         - `extra_fold` (*float*):  
-        The fold increase in sequencing depth to simulate. For example, extra_fold = 1.0 represents doubling
-        the current sequencing depth.
-        
+          The fold increase in sequencing depth to simulate. For example, extra_fold = 1.0 represents doubling
+          the current sequencing depth.
+          
         - `n` (*int, optional*):  
-        The number of parts to split the sample signature into for modeling the saturation curve.
-        Default is 30.
+          The number of parts to split the sample signature into for modeling the saturation curve.
+          Default is 30.
 
         **Returns**:
             - `float`:  
-            The predicted genome coverage index at the increased sequencing depth.
+              The predicted genome coverage index at the increased sequencing depth.
 
         **Raises**:
             - `RuntimeError`:  
-            If the saturation model fails to converge during curve fitting.
+              If the saturation model fails to converge during curve fitting.
 
         **Usage Example**:
 
@@ -821,50 +968,44 @@ class ReferenceQC:
         return predicted_coverage
 
     def calculate_chromosome_metrics(self, chr_to_sig: Dict[str, SnipeSig]) -> Dict[str, Any]:
-        """
-        Calculate sex-related metrics based on chromosome-specific signatures.
+        r"""
+        Calculate the coefficient of variation (CV) of mean abundances across autosomal chromosomes.
 
-        This method processes a collection of chromosome-specific `SnipeSig` instances to compute
-        the coefficient of variation (CV) of mean abundances across autosomal chromosomes. The
-        method ensures that each chromosome signature contains only unique hashes that do not
-        overlap with hashes from other chromosomes. It excludes sex chromosomes (e.g., Y chromosome)
-        from the analysis.
+        This method computes the CV to assess the variability of mean abundances among autosomal chromosomes,
+        excluding any sex chromosomes.
 
-        **Workflow**:
-        
-        1. **Ensure Uniqueness of Chromosome Signatures**:
-        - Utilizes the `get_unique_signatures` function to filter each chromosome signature
-            so that it contains only hashes unique to that chromosome.
+        **Mathematical Explanation**:
 
-        2. **Compute Mean Abundances**:
-        - Iterates over each autosomal chromosome signature.
-        - For each chromosome, intersects the sample signature (`self.sample_sig`) with the
-            chromosome-specific signature to obtain shared hashes.
-        - Calculates the mean abundance of these shared hashes.
-        - Stores the mean abundances in a dictionary keyed by chromosome name.
+        The Coefficient of Variation (CV) is defined as:
 
-        3. **Calculate Coefficient of Variation (CV)**:
-        - Converts the collected mean abundances into a NumPy array.
-        - Computes the CV as the ratio of the standard deviation to the mean of the mean abundances.
-        - Updates the `chrs_stats` attribute with the computed CV under the key `"Autosomal_CV"`.
+        $$
+        \text{CV} = \frac{\sigma}{\mu}
+        $$
+
+        Where:
+        - \( \sigma \) is the standard deviation of the mean abundances across autosomal chromosomes.
+        - \( \mu \) is the mean of the mean abundances across autosomal chromosomes.
 
         **Parameters**:
-            - `chr_to_sig` (`Dict[str, SnipeSig]`):  
-            A dictionary mapping chromosome names (e.g., `'autosomal-1'`, `'autosomal-2'`, `'sex-x'`, `'sex-y'`) to their corresponding
-            `SnipeSig` instances. Each `SnipeSig` should represent the k-mer signature of a specific chromosome.
+
+        - `chr_to_sig` (`Dict[str, SnipeSig]`):  
+          A dictionary mapping chromosome names (e.g., `'autosomal-1'`, `'autosomal-2'`, `'sex-x'`, `'sex-y'`) to their corresponding
+          `SnipeSig` instances. Each `SnipeSig` should represent the k-mer signature of a specific chromosome.
 
         **Returns**:
-            - `Dict[str, Any]`:  
-            A dictionary containing the computed metrics. Specifically, it includes:
-                - `"Autosomal_CV"` (`float`):  
+
+        - `Dict[str, Any]`:  
+          A dictionary containing the computed metrics:
+              - `"Autosomal_CV"` (`float`):  
                 The coefficient of variation of mean abundances across autosomal chromosomes.
 
         **Raises**:
-            - `ValueError`:  
-            If `chr_to_sig` is empty or if there is an inconsistency in the signatures' parameters.
+
+        - `ValueError`:  
+          If `chr_to_sig` is empty or if there is an inconsistency in the signatures' parameters.
 
         **Usage Example**:
-        
+
         ```python
         # Assume `chr_signatures` is a dictionary of chromosome-specific SnipeSig instances
         chr_signatures = {
@@ -873,21 +1014,22 @@ class ReferenceQC:
             "X": sig_chrX,
             "Y": sig_chrY
         }
-        
-        # Calculate sex-related metrics
-        metrics = sample_instance.calculate_sex_metrics(chr_to_sig=chr_signatures)
-        
+
+        # Calculate chromosome metrics
+        metrics = qc.calculate_chromosome_metrics(chr_to_sig=chr_signatures)
+
         print(metrics)
         # Output:
         # {'Autosomal_CV': 0.15}
         ```
 
         **Notes**:
-            - **Exclusion of Sex Chromosomes**:  
-            Chromosomes with names containing the substring `"sex"` (e.g., `'sex-y'`, `'sex-x'`) are excluded from the analysis to focus solely on autosomal chromosomes.
-            
-            - **Signature Intersection**:  
-            The intersection operation (`self.sample_sig & chr_sig`) retains only the hashes present in both the sample signature and the chromosome-specific signature, ensuring that the mean abundance calculation is based on shared k-mers.
+
+        - **Exclusion of Sex Chromosomes**:  
+          Chromosomes with names containing the substring `"sex"` (e.g., `'sex-y'`, `'sex-x'`) are excluded from the CV calculation to focus solely on autosomal chromosomes.
+
+        - **Mean Abundance Calculation**:  
+          The mean abundance for each chromosome is calculated by intersecting the sample signature with the chromosome-specific signature and averaging the abundances of the shared k-mers.
         """
         
         # Implementation of the method
@@ -904,7 +1046,7 @@ class ReferenceQC:
             self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
         
 
-        # chr_to_mean_abundance but without any chr with partian name sex
+        # chr_to_mean_abundance but without any chr with partial name sex
         autosomal_chr_to_mean_abundance = {}
         for chr_name, mean_abundance in chr_to_mean_abundance.items():
             if "sex" in chr_name.lower():
@@ -925,111 +1067,107 @@ class ReferenceQC:
         # optional return, not required
         return self.chrs_stats
     
+    
     def calculate_sex_chrs_metrics(self, genome_and_chr_to_sig: Dict[str, SnipeSig]) -> Dict[str, Any]:
-        """
+        r"""
         Calculate sex chromosome-related metrics based on genome and chromosome-specific signatures.
-        
+
         This method processes a collection of genome and chromosome-specific `SnipeSig` instances to compute
         metrics such as the X-Ploidy score and Y-Coverage. It ensures that each chromosome signature contains
         only unique hashes that do not overlap with hashes from other chromosomes or the autosomal genome.
         The method excludes sex chromosomes (e.g., Y chromosome) from the autosomal genome signature to
         accurately assess sex chromosome metrics.
+
+        **Mathematical Explanation**:
+
+        - **X-Ploidy Score**:
         
-        **Workflow**:
-        
-        1. **Validation**:
-        - Ensures that the chromosome X signature (`'sex-x'`) is present in the provided signatures.
-        
-        2. **Segregation of Genome and Chromosome Signatures**:
-        - Separates the autosomal genome signature (identified by the suffix `'-snipegenome'`) from
-            chromosome-specific signatures.
-        
-        3. **Uniqueness Enforcement**:
-        - Utilizes the `get_unique_signatures` function to filter each chromosome signature so that it
-            contains only hashes unique to that chromosome.
-        
-        4. **Exclusion of Y Chromosome**:
-        - If a Y chromosome signature (`'sex-y'`) exists, it is removed from the autosomal genome signature
-            to prevent overlaps.
-        
-        5. **Extraction of X Chromosome-Specific Hashes**:
-        - Removes X chromosome hashes from the autosomal genome signature.
-        - Derives the X chromosome-specific signature by subtracting the autosomal genome signature
-            from the unique X chromosome signature.
-        
-        6. **Intersection with Sample Signature**:
-        - Intersects the sample signature (`self.sample_sig`) with both the X chromosome-specific
-            signature and the autosomal genome signature to obtain sample-specific signatures.
-        
-        7. **Calculation of X-Ploidy Score**:
-        - Computes the ratio of the mean abundance of X chromosome-specific k-mers to that of autosomal
-            k-mers.
-        - Adjusts the score based on the relative sizes of the autosomal genome and X chromosome-specific
-            signatures.
-        
-        8. **Calculation of Y-Coverage (If Applicable)**:
-        - If a Y chromosome signature exists, calculates the coverage of Y chromosome-specific k-mers
-            in the sample relative to autosomal coverage.
-        
-        9. **Updating Metrics**:
-        - Stores the calculated metrics (`"X-Ploidy score"` and `"Y-Coverage"`) in the `self.sex_stats` dictionary.
-        
+          The X-Ploidy score is calculated using the formula:
+
+          $$
+          \text{X-Ploidy} = \left(\frac{\mu_X}{\mu_{\text{autosomal}}}\right) \times \left(\frac{N_{\text{autosomal}}}{N_X}\right)
+          $$
+
+          Where:
+          - \( \mu_X \) is the mean abundance of X chromosome-specific k-mers in the sample.
+          - \( \mu_{\text{autosomal}} \) is the mean abundance of autosomal k-mers in the sample.
+          - \( N_{\text{autosomal}} \) is the number of autosomal k-mers in the reference genome.
+          - \( N_X \) is the number of X chromosome-specific k-mers in the reference genome.
+
+        - **Y-Coverage**:
+
+          The Y-Coverage is calculated using the formula:
+
+          $$
+          \text{Y-Coverage} = \frac{\left(\frac{N_Y^{\text{sample}}}{N_Y}\right)}{\left(\frac{N_{\text{autosomal}}^{\text{sample}}}{N_{\text{autosomal}}}\right)}
+          $$
+
+          Where:
+          - \( N_Y^{\text{sample}} \) is the number of Y chromosome-specific k-mers in the sample.
+          - \( N_Y \) is the number of Y chromosome-specific k-mers in the reference genome.
+          - \( N_{\text{autosomal}}^{\text{sample}} \) is the number of autosomal k-mers in the sample.
+          - \( N_{\text{autosomal}} \) is the number of autosomal k-mers in the reference genome.
+
         **Parameters**:
+
             - `genome_and_chr_to_sig` (`Dict[str, SnipeSig]`):  
-            A dictionary mapping signature names to their corresponding `SnipeSig` instances. This should include
-            the autosomal genome signature (with a name ending in `'-snipegenome'`) and chromosome-specific
-            signatures (e.g., `'sex-x'`, `'sex-y'`, `'1'`, `'2'`, etc.).
-        
+              A dictionary mapping signature names to their corresponding `SnipeSig` instances. This should include
+              the autosomal genome signature (with a name ending in `'-snipegenome'`) and chromosome-specific
+              signatures (e.g., `'sex-x'`, `'sex-y'`, `'autosome-1'`, `'autosome-2'`, etc.).
+
         **Returns**:
+
             - `Dict[str, Any]`:  
-            A dictionary containing the calculated sex-related metrics:
-                - `"X-Ploidy score"` (`float`):  
-                The ploidy score of the X chromosome, reflecting the ratio of X chromosome k-mer abundance
-                to autosomal k-mer abundance, adjusted by genome and X chromosome sizes.
-                - `"Y-Coverage"` (`float`, optional):  
-                The coverage of Y chromosome-specific k-mers in the sample relative to autosomal coverage.
-                This key is present only if a Y chromosome signature is provided.
-        
+              A dictionary containing the calculated sex-related metrics:
+                  - `"X-Ploidy score"` (`float`):  
+                    The ploidy score of the X chromosome, reflecting the ratio of X chromosome k-mer abundance
+                    to autosomal k-mer abundance, adjusted by genome and X chromosome sizes.
+                  - `"Y-Coverage"` (`float`, optional):  
+                    The coverage of Y chromosome-specific k-mers in the sample relative to autosomal coverage.
+                    This key is present only if a Y chromosome signature is provided.
+
         **Raises**:
+
             - `ValueError`:  
-            - If the `'sex-x'` chromosome signature is not found in `genome_and_chr_to_sig`.
-            - If the autosomal genome signature is not found or improperly labeled.
-        
+              - If the `'sex-x'` chromosome signature is not found in `genome_and_chr_to_sig`.
+              - If the autosomal genome signature is not found or improperly labeled.
+
         **Usage Example**:
-        
+
         ```python
         # Assume `genome_and_chr_signatures` is a dictionary of genome and chromosome-specific SnipeSig instances
         genome_and_chr_signatures = {
+            "autosomal-snipegenome": sig_autosomal_genome,
             "1": sig_chr1,
             "2": sig_chr2,
             "sex-x": sig_sex_x,
-            "sex-y": sig_sex_y,
-            "autosomal-snipegenome": sig_autosomal_genome
+            "sex-y": sig_sex_y
         }
-        
+
         # Calculate sex chromosome metrics
-        metrics = sample_instance.calculate_sex_chrs_metrics(genome_and_chr_to_sig=genome_and_chr_signatures)
-        
+        metrics = qc.calculate_sex_chrs_metrics(genome_and_chr_to_sig=genome_and_chr_signatures)
+
         print(metrics)
         # Output Example:
         # {
-        #     "X-Ploidy score": 1.2,
-        #     "Y-Coverage": 0.85
+        #     "X-Ploidy score": 2.6667,
+        #     "Y-Coverage": 0.0
         # }
         ```
-        
+
         **Notes**:
+
             - **Signature Naming Convention**:  
-            The autosomal genome signature must have a name ending with `'-snipegenome'`. Chromosome-specific
-            signatures should be named accordingly (e.g., `'sex-x'`, `'sex-y'`, `'autosomal-1'`, `'autosomal-2'`, etc.).
-            
+              The autosomal genome signature must have a name ending with `'-snipegenome'`. Chromosome-specific
+              signatures should be named accordingly (e.g., `'sex-x'`, `'sex-y'`, `'autosomal-1'`, `'autosomal-2'`, etc.).
+
             - **Exclusion of Sex Chromosomes from Autosomal Genome**:  
-            The Y chromosome signature (`'sex-y'`) is subtracted from the autosomal genome signature to ensure
-            that Y chromosome k-mers are not counted towards autosomal metrics.
-            
+              The Y chromosome signature (`'sex-y'`) is subtracted from the autosomal genome signature to ensure
+              that Y chromosome k-mers are not counted towards autosomal metrics.
+
             - **Robustness**:  
-            The method includes comprehensive logging for debugging purposes, tracking each major step and
-            any exclusions made during processing.
+              The method includes comprehensive logging for debugging purposes, tracking each major step and
+              any exclusions made during processing.
         """
         
         # Ensure that the chromosome X signature exists
