@@ -243,8 +243,6 @@ class ReferenceQC:
                  reference_sig: SnipeSig,
                  amplicon_sig: Optional[SnipeSig] = None,
                  enable_logging: bool = False,
-                 chr_name_to_sig: Optional[Dict[str, SnipeSig]] = None,
-                 flag_chr_specific: bool = False,
                  **kwargs):
         # Initialize logger
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -283,11 +281,6 @@ class ReferenceQC:
 
         self.logger.debug("Chromosome specific signatures provided.")
         self.flag_activate_sex_metrics = True
-        self.chr_name_to_sig: Dict[str, SnipeSig] = chr_name_to_sig
-        self.chr_to_specific_kmers: Dict[str, SnipeSig] = {}
-        self.flag_chr_specific = flag_chr_specific
-            
-
 
 
         self.sample_sig = sample_sig
@@ -445,13 +438,20 @@ class ReferenceQC:
         # Include amplicon_stats if available
         if self.amplicon_sig is not None:
             aggregated_stats.update(self.amplicon_stats)
-        # Include predicted assay type if amplicon_sig is provided
-        if self.amplicon_sig is not None:
             aggregated_stats["Predicted Assay Type"] = self.predicted_assay_type
+                    
+
+        if self.chrs_stats:
+            aggregated_stats.update(self.chrs_stats)
+        
+        if self.sex_stats:
+            aggregated_stats.update(self.sex_stats)
+
         # Include advanced_stats if requested
         if include_advanced:
             self._calculate_advanced_stats()
             aggregated_stats.update(self.advanced_stats)
+        
         return aggregated_stats
 
     def _calculate_advanced_stats(self):
@@ -894,57 +894,191 @@ class ReferenceQC:
         return self.chrs_stats
     
     def calculate_sex_chrs_metrics(self, genome_and_chr_to_sig: Dict[str, SnipeSig]) -> Dict[str, Any]:
+        """
+        Calculate sex chromosome-related metrics based on genome and chromosome-specific signatures.
         
-        # sex-x must exist!
+        This method processes a collection of genome and chromosome-specific `SnipeSig` instances to compute
+        metrics such as the X-Ploidy score and Y-Coverage. It ensures that each chromosome signature contains
+        only unique hashes that do not overlap with hashes from other chromosomes or the autosomal genome.
+        The method excludes sex chromosomes (e.g., Y chromosome) from the autosomal genome signature to
+        accurately assess sex chromosome metrics.
+        
+        **Workflow**:
+        
+        1. **Validation**:
+        - Ensures that the chromosome X signature (`'sex-x'`) is present in the provided signatures.
+        
+        2. **Segregation of Genome and Chromosome Signatures**:
+        - Separates the autosomal genome signature (identified by the suffix `'-snipegenome'`) from
+            chromosome-specific signatures.
+        
+        3. **Uniqueness Enforcement**:
+        - Utilizes the `get_unique_signatures` function to filter each chromosome signature so that it
+            contains only hashes unique to that chromosome.
+        
+        4. **Exclusion of Y Chromosome**:
+        - If a Y chromosome signature (`'sex-y'`) exists, it is removed from the autosomal genome signature
+            to prevent overlaps.
+        
+        5. **Extraction of X Chromosome-Specific Hashes**:
+        - Removes X chromosome hashes from the autosomal genome signature.
+        - Derives the X chromosome-specific signature by subtracting the autosomal genome signature
+            from the unique X chromosome signature.
+        
+        6. **Intersection with Sample Signature**:
+        - Intersects the sample signature (`self.sample_sig`) with both the X chromosome-specific
+            signature and the autosomal genome signature to obtain sample-specific signatures.
+        
+        7. **Calculation of X-Ploidy Score**:
+        - Computes the ratio of the mean abundance of X chromosome-specific k-mers to that of autosomal
+            k-mers.
+        - Adjusts the score based on the relative sizes of the autosomal genome and X chromosome-specific
+            signatures.
+        
+        8. **Calculation of Y-Coverage (If Applicable)**:
+        - If a Y chromosome signature exists, calculates the coverage of Y chromosome-specific k-mers
+            in the sample relative to autosomal coverage.
+        
+        9. **Updating Metrics**:
+        - Stores the calculated metrics (`"X-Ploidy score"` and `"Y-Coverage"`) in the `self.sex_stats` dictionary.
+        
+        **Parameters**:
+            - `genome_and_chr_to_sig` (`Dict[str, SnipeSig]`):  
+            A dictionary mapping signature names to their corresponding `SnipeSig` instances. This should include
+            the autosomal genome signature (with a name ending in `'-snipegenome'`) and chromosome-specific
+            signatures (e.g., `'sex-x'`, `'sex-y'`, `'1'`, `'2'`, etc.).
+        
+        **Returns**:
+            - `Dict[str, Any]`:  
+            A dictionary containing the calculated sex-related metrics:
+                - `"X-Ploidy score"` (`float`):  
+                The ploidy score of the X chromosome, reflecting the ratio of X chromosome k-mer abundance
+                to autosomal k-mer abundance, adjusted by genome and X chromosome sizes.
+                - `"Y-Coverage"` (`float`, optional):  
+                The coverage of Y chromosome-specific k-mers in the sample relative to autosomal coverage.
+                This key is present only if a Y chromosome signature is provided.
+        
+        **Raises**:
+            - `ValueError`:  
+            - If the `'sex-x'` chromosome signature is not found in `genome_and_chr_to_sig`.
+            - If the autosomal genome signature is not found or improperly labeled.
+        
+        **Usage Example**:
+        
+        ```python
+        # Assume `genome_and_chr_signatures` is a dictionary of genome and chromosome-specific SnipeSig instances
+        genome_and_chr_signatures = {
+            "1": sig_chr1,
+            "2": sig_chr2,
+            "sex-x": sig_sex_x,
+            "sex-y": sig_sex_y,
+            "autosomal-snipegenome": sig_autosomal_genome
+        }
+        
+        # Calculate sex chromosome metrics
+        metrics = sample_instance.calculate_sex_chrs_metrics(genome_and_chr_to_sig=genome_and_chr_signatures)
+        
+        print(metrics)
+        # Output Example:
+        # {
+        #     "X-Ploidy score": 1.2,
+        #     "Y-Coverage": 0.85
+        # }
+        ```
+        
+        **Notes**:
+            - **Signature Naming Convention**:  
+            The autosomal genome signature must have a name ending with `'-snipegenome'`. Chromosome-specific
+            signatures should be named accordingly (e.g., `'sex-x'`, `'sex-y'`, `'autosomal-1'`, `'autosomal-2'`, etc.).
+            
+            - **Exclusion of Sex Chromosomes from Autosomal Genome**:  
+            The Y chromosome signature (`'sex-y'`) is subtracted from the autosomal genome signature to ensure
+            that Y chromosome k-mers are not counted towards autosomal metrics.
+            
+            - **Robustness**:  
+            The method includes comprehensive logging for debugging purposes, tracking each major step and
+            any exclusions made during processing.
+        """
+        
+        # Ensure that the chromosome X signature exists
         if 'sex-x' not in genome_and_chr_to_sig:
-            self.logger.error("Chromosome X not found in the chromosome list.")
-            raise ValueError("Chromosome X not found in the chromosome list.")
+            self.logger.error("Chromosome X ('sex-x') not found in the provided signatures.")
+            raise ValueError("Chromosome X ('sex-x') not found in the provided signatures.")
         
-        # pop the genome signature with suffix -snipegenome
-        chr_to_sig = {}
-        autosomals_genome_sig: SnipeSig = None
-        self.logger.debug("Splitting the genome from the chromosome signatures.")
-        for key, value in genome_and_chr_to_sig.items():
-            if key.endswith('-snipegenome'):
-                self.logger.debug("\t-Found genome signature.")
-                autosomals_genome_sig = value
-                continue
-            chr_to_sig[key] = value
-            
-
-            
-            
-        # create specific chromosome signatures
+        # Separate the autosomal genome signature from chromosome-specific signatures
+        chr_to_sig: Dict[str, SnipeSig] = {}
+        autosomals_genome_sig: Optional[SnipeSig] = None
+        self.logger.debug("Separating autosomal genome signature from chromosome-specific signatures.")
+        
+        for name, sig in genome_and_chr_to_sig.items():
+            if name.endswith('-snipegenome'):
+                self.logger.debug("\t- Identified autosomal genome signature: '%s'.", name)
+                autosomals_genome_sig = sig
+            else:
+                chr_to_sig[name] = sig
+        
+        if autosomals_genome_sig is None:
+            self.logger.error("Autosomal genome signature (ending with '-snipegenome') not found.")
+            raise ValueError("Autosomal genome signature (ending with '-snipegenome') not found.")
+        
+        # Ensure all chromosome signatures have unique hashes
         specific_chr_to_sig = SnipeSig.get_unique_signatures(chr_to_sig)
-        # check if we have Y chr, then delete it from the genome signature
-        if 'sex-y' in chr_to_sig:
-            self.logger.debug("\t-Y chromosome, detected, removing it from the genome signature.")
-            self.logger.debug("\t-Original genome size: %d", len(autosomals_genome_sig))
-            autosomals_genome_sig = autosomals_genome_sig - chr_to_sig['sex-y']
-            self.logger.debug("\t-Updated genome size: %d", len(autosomals_genome_sig))
         
-        # removing x-chr from the genome signature
+        # Exclude Y chromosome from the autosomal genome signature if present
+        if 'sex-y' in chr_to_sig:
+            self.logger.debug("Y chromosome ('sex-y') detected. Removing its hashes from the autosomal genome signature.")
+            self.logger.debug("\t- Original autosomal genome size: %d hashes.", len(autosomals_genome_sig))
+            autosomals_genome_sig = autosomals_genome_sig - chr_to_sig['sex-y']
+            self.logger.debug("\t- Updated autosomal genome size after removing Y chromosome: %d hashes.", len(autosomals_genome_sig))
+        
+        # Remove X chromosome hashes from the autosomal genome signature
+        self.logger.debug("Removing X chromosome ('sex-x') hashes from the autosomal genome signature.")
         autosomals_genome_sig = autosomals_genome_sig - chr_to_sig['sex-x']
+        
+        # Derive the X chromosome-specific signature by subtracting autosomal genome hashes
         specific_xchr_sig = specific_chr_to_sig["sex-x"] - autosomals_genome_sig
         
+        # Intersect the sample signature with chromosome-specific signatures
         sample_specific_xchr_sig = self.sample_sig & specific_xchr_sig
         sample_autosomal_sig = self.sample_sig & autosomals_genome_sig
         
-        xhr_in_sample_mean_abundance = sample_specific_xchr_sig.get_sample_stats["mean_abundance"]
-        autosomal_in_sample_mean_abundance = sample_autosomal_sig.get_sample_stats["mean_abundance"]
+        # Retrieve mean abundances
+        xchr_mean_abundance = sample_specific_xchr_sig.get_sample_stats.get("mean_abundance", 0.0)
+        autosomal_mean_abundance = sample_autosomal_sig.get_sample_stats.get("mean_abundance", 0.0)
         
-        xploidy_score = (xhr_in_sample_mean_abundance / autosomal_in_sample_mean_abundance)
-        xploidy_score *= len(autosomals_genome_sig) / len(specific_xchr_sig)
+        # Calculate X-Ploidy score
+        if autosomal_mean_abundance == 0:
+            self.logger.warning("Autosomal mean abundance is zero. Setting X-Ploidy score to zero to avoid division by zero.")
+            xploidy_score = 0.0
+        else:
+            xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) * \
+                            (len(autosomals_genome_sig) / len(specific_xchr_sig) if len(specific_xchr_sig) > 0 else 0.0)
         
-        self.logger.debug("X-Ploidy score: %f", xploidy_score)
+        self.logger.debug("Calculated X-Ploidy score: %.4f", xploidy_score)
         self.sex_stats.update({"X-Ploidy score": xploidy_score})
         
-        # calculate ycoverage if y-chr is provided
+        # Calculate Y-Coverage if Y chromosome is present
         if 'sex-y' in specific_chr_to_sig:
+            self.logger.debug("Calculating Y-Coverage based on Y chromosome-specific k-mers.")
+            
+            # Derive Y chromosome-specific k-mers by excluding autosomal and X chromosome k-mers
             ychr_specific_kmers = chr_to_sig["sex-y"] - autosomals_genome_sig - specific_xchr_sig
+            
+            # Intersect Y chromosome-specific k-mers with the sample signature
             ychr_in_sample = self.sample_sig & ychr_specific_kmers
+            
+            # Derive autosomal-specific k-mers by excluding X and Y chromosome k-mers from the reference signature
             autosomals_specific_kmers = self.reference_sig - specific_chr_to_sig["sex-x"] - specific_chr_to_sig['sex-y']
-            _ycoverage = (len(ychr_in_sample) / len(ychr_specific_kmers))
-            _ycoverage /= (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
-            self.logger.debug("Y-Coverage: %f", _ycoverage)
-            self.sex_stats.update({"Y-Coverage": _ycoverage})
+            
+            # Calculate Y-Coverage metric
+            if len(ychr_specific_kmers) == 0 or len(autosomals_specific_kmers) == 0:
+                self.logger.warning("Insufficient k-mers for Y-Coverage calculation. Setting Y-Coverage to zero.")
+                ycoverage = 0.0
+            else:
+                ycoverage = (len(ychr_in_sample) / len(ychr_specific_kmers)) / \
+                        (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
+            
+            self.logger.debug("Calculated Y-Coverage: %.4f", ycoverage)
+            self.sex_stats.update({"Y-Coverage": ycoverage})
+        
+        return self.sex_stats

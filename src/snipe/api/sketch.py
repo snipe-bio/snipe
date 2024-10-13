@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from pyfastx import Fastx as SequenceReader
 import sourmash
 from pathos.multiprocessing import ProcessingPool as Pool
-from snipe.api import SigType, SnipeSig
+from snipe.api.enums import SigType
+from snipe.api import SnipeSig
 
 
 class SnipeSketch:
