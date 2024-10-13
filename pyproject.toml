@@ -1,62 +1,145 @@
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
+[project]
 name = "snipe"
 version = "0.1.0"
-description = "lightweight, fast, accurate estimator for basic sequence alignment metrics and more."
-authors = [
-    "Mohamed Abuelanin <mabuelanin@gmail.com>",
-    "Tamer A. Mansour <drtamermansour@gmail.com>"
-]
-license = "MIT"
+description = "A versatile API and CLI tool for Snipe."
 readme = "README.md"
+license = { text = "AGPL" }
+authors = [
+    { name = "Mohamed Abuelanin", email = "mabuelanin@gmail.com" },
+    { name = "Tamer Mansour", email = "drtamermansour@gmail.com" },
+]
+maintainers = [
+    { name = "Mohamed Abuelanin", email = "mabuelanin@gmail.com" }
+]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
 ]
-packages = [
-    { include = "snipe" }
+keywords = ["API", "CLI", "tool", "snipe"]
+dependencies = [
+    "requests>=2.25.1",
+    "click>=8.0.0",
+    "sourmash>=4.8.11",
+    "pytest",
+    "numpy",
+    "pyfastx",
+    "pathos",
 ]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-sourmash = "^4.8.7"
-tqdm = "^4.66.2"
-numpy = "^1.26.4"
-pandas = "^2.2.1"
-jax = "^0.4.25"
-click = "^8.1.7"
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.0.0",
+    "hatch>=1.8.0",
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings>=0.19.0",
+    "mkdocs-redirects>=0.3.0",
+    "watchdog>=2.1.0",
+    "pyfastx",
+    "pathos",
+]
+test = [
+    "pytest>=7.0",
+]
 
-[tool.poetry.dev-dependencies]
-pytest = "^8.1.1"
+[project.urls]
+Homepage = "https://github.com/snipe-bio/snipe"
+Repository = "https://github.com/snipe-bio/snipe"
+Bug_Tracker = "https://github.com/snipe-bio/snipe/issues"
 
-[tool.poetry.scripts]
-snipe = 'snipe.cli:cli'
 
-# Conda build configuration (managed separately)
-[tool.pixi.project]
-name = "snipe"
-channels = ["conda-forge", "bioconda"]
-platforms = ["linux-64"]
+[project.scripts]
+snipe = "snipe.cli.main:cli"
 
-# Pixi tasks for development activities
-[tool.pixi.tasks]
-fmt = "ruff format"
-lint = "ruff check --fix"
-test = "pytest tests"
 
-# Pixi dependencies mirrored to match Poetry but in Conda format
-[tool.pixi.dependencies]
-python = ">=3.12"
-sourmash = ">=4.8.7"
-tqdm = ">=4.66.2"
-numpy = ">=1.26.4"
-pandas = ">=2.2.1"
-jax = ">=0.4.25,<0.5"
-click = ">=8.1.7"
-jaxlib = ">=0.4.23,<0.5"
-pytest = ">=8.1.1,<8.2"
-nodejs = ">=20.9.0,<20.10"
+[tool.hatch.version]
+path = "snipe/__init__.py"
+
+[tool.hatch.envs.hatch-build]
+installer = "uv"
+
+[tool.ruff]
+select = ["E", "F", "B"]
+ignore = ["E501"]
+unfixable = ["B"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["E402"]
+"**/tests/*" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.isort]
+extend_skip = [".md", ".json"]
+skip_glob = ["docs/*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+
+[tool.hatch.envs.default]
+dependencies = [
+    "requests>=2.25.1",
+    "click>=8.0.0",
+    "ruff>=0.0.0",
+    "pytest>=7.0",
+    "sourmash>=4.8.11",
+    "mkdocs>=1.6.1",
+    "mkdocstrings>=0.26.1",
+    "mkdocs-redirects>=1.2.1",
+    "watchdog>=5.0.3",
+    "mkdocs-material>=9.5.35",
+    "mkdocstrings-python>=1.11.1",
+    "mkdocs-jupyter",
+    "mkdocs-git-authors-plugin",
+    "mkdocs-git-revision-date-localized-plugin",
+    "pytest",
+]
+
+[tool.hatch.envs.default.scripts]
+install = "pip install -e ."
+test = "pytest"
+lint = "ruff check ."
+format = "ruff format ."
+docs-build = "mkdocs build --config-file=docs/mkdocs.yml"
+docs-serve = "mkdocs serve --config-file=docs/mkdocs.yml"
+
+[tool.hatch.envs.docs]
+dependencies = [
+    "mkdocs>=1.6.1",
+    "mkdocstrings>=0.26.1",
+    "mkdocs-redirects>=1.2.1",
+    "watchdog>=5.0.3",
+    "mkdocs-material>=9.5.35",
+    "mkdocstrings-python>=1.11.1",
+    "mkdocs-jupyter>=0.25.0",
+    "mkdocs-git-authors-plugin>=0.1.0",
+    "mkdocs-git-committers-plugin-2>=0.1.0",
+    "mkdocs-glightbox>=0.1.0",
+    "mkdocs-git-revision-date-localized-plugin>=0.1.0",
+    "mkdocs-jupyter>=0.25.0",
+]
+[tool.hatch.envs.docs.scripts]
+build = "mkdocs build --config-file=docs/mkdocs.yml"
+serve = "mkdocs serve"
+watch = "mkdocs serve --dev-addr=0.0.0.0:8000"
+
+[tool.hatch.build]
+packages = ["src/snipe"]
+
+[tool.hatch.build.targets.sdist]
+include = ["README.md", "LICENSE", "pyproject.toml", "src/snipe/**"]
+
+[tool.hatch.build.targets.wheel]
+include = ["README.md", "LICENSE", "pyproject.toml", "src/snipe/**"]
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.11", "3.12", "3.13"]

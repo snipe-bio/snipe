@@ -1,0 +1,28 @@
+.cmd {
+    display: inline-block;
+    background-color: #c4c4c49d;
+    color: #040404;
+    font-family: 'Courier New', monospace;
+    padding: 5px 10px;
+    border-radius: 5px;
+    /* white-space: pre-line; */
+    overflow: auto;
+    max-width: 100%;
+    font-size: small;
+    border: 1px solid #444;
+    font-weight: bolder;
+}
+
+.fancy-hr {
+    border: 0; /* Removes default line */
+    height: 1.3px; /* Specifies the height of the HR */
+    background: #333; /* Sets the color of the line */
+    background-image: linear-gradient(to right, #ccc, #333, #ccc); /* Creates a gradient effect from left to right */
+    margin: 20px 0; /* Provides some space before and after the HR */
+}
+
+/* Custom CSS for equations */
+.math-block {
+    overflow-x: auto;
+    white-space: nowrap;
+}

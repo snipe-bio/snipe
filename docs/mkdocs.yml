@@ -1,0 +1,103 @@
+site_name: Snipe Documentation
+site_url: https://snipe-bio.github.io/snipe
+site_description: Snipe, an ultrafast and memory-efficient alignment-free sequencing quality control tool.
+site_author: "Mohamed Abuelanin"
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      media: "(prefers-color-scheme: light)"
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - scheme: slate
+      media: "(prefers-color-scheme: dark)"
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+  font:
+    text: Open Sans
+    code: Fira Code
+  # logo: assets/logo.svg
+  # favicon: assets/logo.svg
+  features:
+    - content.code.copy
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - math
+    - mathjax
+
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - footnotes
+  - abbr
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - attr_list
+  - md_in_html
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          # format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true 
+  - pymdownx.arithmatex:
+      generic: true
+      
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_signature: true
+  - git-revision-date-localized:
+      enable_creation_date: true  
+nav:
+  - Home: index.md
+  - API:
+      - SnipeSig: SnipeSig.md
+      - ReferenceQC: ReferenceQC.md
+  - CLI: cli.md
+
+
+
+extra_css:
+  - stylesheets/extra.css
+
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+
+copyright: Copyright &copy; 2024 <a href='https://www.mr-eyes.com/'>Mohamed Abuelanin</a>, Tamer Mansour
+
+extra:
+  analytics:
+    provider: google
+    property: GTM-N5RW3TB3
