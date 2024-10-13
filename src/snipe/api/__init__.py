@@ -105,11 +105,14 @@ class SnipeSig:
 
         sourmash_sigs: Dict[str, sourmash.signature.SourmashSignature] = {}
         _sourmash_sig: Union[sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature] = None
-        
+
         
         self.logger.debug("Proceeding with a sigtype of %s", sig_type)
         
                 
+                
+        
+
         
         if not isinstance(sourmash_sig, (str, sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature)):
             # if the str is not a file path
@@ -165,6 +168,9 @@ class SnipeSig:
             elif len(sourmash_sigs) == 1:
                 self.logger.debug("Found a single signature in the genome sig input; Will use this signature.")
                 _sourmash_sig = list(sourmash_sigs.values())[0]
+        else:
+            self.logger.debug("Unknown sigtype: %s", sig_type)
+            raise ValueError(f"Unknown sigtype: {sig_type}")
                 
         self.logger.debug("Length of currently loaded signature: %d, with name: %s", len(_sourmash_sig), _sourmash_sig.name)
 
@@ -180,6 +186,7 @@ class SnipeSig:
         if not self._track_abundance:
             self.logger.debug("Signature does not track abundance. Setting all abundances to 1.")
             self._abundances = np.ones(len(_sourmash_sig.minhash.hashes), dtype=np.uint32)
+            # self._track_abundance = True
         else:
             self._abundances = np.array(list(_sourmash_sig.minhash.hashes.values()), dtype=np.uint32)
 
@@ -325,7 +332,8 @@ class SnipeSig:
             ValueError: If the other object is not a SnipeSig instance.
         """
         if not isinstance(other, SnipeSig):
-            _e_msg = "Only SnipeSig objects can be used for this operation."
+            _e_msg = "Only SnipeSig objects can be used for this operation.\n"
+            _e_msg += f"Invalid type for other: {type(other).__name__} and {type(self).__name__}"
             self.logger.error(_e_msg)
             raise ValueError(_e_msg)
 
@@ -359,7 +367,7 @@ class SnipeSig:
         Raises:
             ValueError: If the signature does not track abundance or if the value is invalid.
         """
-        if not self._track_abundance:
+        if not self._track_abundance and self.sigtype == SigType.SAMPLE:
             self.logger.error("Cannot %s: signature does not track abundance.", operation)
             raise ValueError("Signature does not track abundance.")
 
@@ -1215,17 +1223,28 @@ class SnipeSig:
                 - `name`: Name of the signature.
                 - `filename`: Filename of the signature.
         """
+        
+        # if self.sigtype != SigType.SAMPLE then don't return abundance stats
+        
         stats = {
-            "total_abundance": self.total_abundance,
-            "mean_abundance": self.mean_abundance,
-            "median_abundance": self.median_abundance,
-            "num_singletons": self.count_singletons(),
             "num_hashes": len(self._hashes),
             "ksize": self._ksize,
             "scale": self._scale,
             "name": self._name,
-            "filename": self._filename,
+            "filename": self._filename
         }
+        
+        if self.sigtype != SigType.SAMPLE:
+            stats["total_abundance"] = None
+            stats["mean_abundance"] = None
+            stats["median_abundance"] = None
+            stats["num_singletons"] = None
+        else:
+            stats["total_abundance"] = self.total_abundance
+            stats["mean_abundance"] = self.mean_abundance
+            stats["median_abundance"] = self.median_abundance
+            stats["num_singletons"] = self.count_singletons()
+            
         return stats
 
     @property

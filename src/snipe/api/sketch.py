@@ -411,7 +411,7 @@ class SnipeSketch:
         ) -> None:
             header = f"{name} {comment}" if comment else name
             seq_type, seq_name = self.parse_fasta_header(header)
-            current_mh = sourmash.MinHash(n=0, ksize=ksize, scaled=scale)
+            current_mh = sourmash.MinHash(n=0, ksize=ksize, scaled=scale, track_abundance=True)
             current_mh.add_sequence(seq, force=True)
 
             with mh_lock:

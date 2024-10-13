@@ -323,6 +323,7 @@ class ReferenceQC:
             self.amplicon_sig_stats = self.amplicon_sig.get_sample_stats
 
         # Compute metrics
+        self.logger.debug("Calculating statistics.")
         self._calculate_stats()
     
     def _create_chr_specific_sigs_if_needed(self):
@@ -827,3 +828,4 @@ class ReferenceQC:
         5) Calculate the x-ploidy score = 
 
         """
+        

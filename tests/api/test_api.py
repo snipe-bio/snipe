@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 import numpy as np
-import sourmash as smash
+import sourmash
 
 from snipe.api import SnipeSig
 from snipe.api.enums import SigType
@@ -74,10 +74,10 @@ class TestSnipeSig(unittest.TestCase):
         """
         # Load sample signature JSON and parse into SourmashSignature object
         self.sample_json = sample_signature_json()
-        self.sample_sig = smash.load_one_signature_from_json(self.sample_json)
+        self.sample_sig = sourmash.load_one_signature_from_json(self.sample_json)
 
         self.sample_json_2 = sample_signature_json_2()
-        self.sample_sig_2 = smash.load_one_signature_from_json(self.sample_json_2)
+        self.sample_sig_2 = sourmash.load_one_signature_from_json(self.sample_json_2)
 
         # Create SnipeSig instances
         self.snipe_sig = SnipeSig(
@@ -228,7 +228,7 @@ class TestSnipeSig(unittest.TestCase):
         """
         expected_repr = (
             "SnipeSig(name=test_signature, ksize=31, scale=1, "
-            "type=SigType.SAMPLE, num_hashes=5)"
+            "type=SAMPLE, num_hashes=5)"
         )
         self.assertEqual(repr(self.snipe_sig), expected_repr)
         self.assertEqual(str(self.snipe_sig), expected_repr)
@@ -427,7 +427,7 @@ class TestSnipeSig(unittest.TestCase):
                 "version": 0.4
             }
         ])
-        sig3 = smash.load_one_signature_from_json(sig3_json)
+        sig3 = sourmash.load_one_signature_from_json(sig3_json)
         snipe_sig3 = SnipeSig(
             sourmash_sig=sig3,
             enable_logging=False
@@ -486,7 +486,7 @@ class TestSnipeSig(unittest.TestCase):
                 "version": 0.4
             }
         ])
-        sig_diff_ksize = smash.load_one_signature_from_json(sig_diff_ksize_json)
+        sig_diff_ksize = sourmash.load_one_signature_from_json(sig_diff_ksize_json)
         snipe_diff_ksize = SnipeSig(
             sourmash_sig=sig_diff_ksize,
             enable_logging=False
@@ -574,7 +574,7 @@ class TestSnipeSig(unittest.TestCase):
                 "version": 0.4
             }
         ])
-        sig_diff_ksize = smash.load_one_signature_from_json(sig_diff_ksize_json)
+        sig_diff_ksize = sourmash.load_one_signature_from_json(sig_diff_ksize_json)
         snipe_diff_ksize = SnipeSig(
             sourmash_sig=sig_diff_ksize,
             enable_logging=False
@@ -679,7 +679,7 @@ class TestSnipeSig(unittest.TestCase):
         Test initialization when track_abundance is False.
         """
         # Create a MinHash object that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -688,7 +688,7 @@ class TestSnipeSig(unittest.TestCase):
         for h in [10, 20, 30, 40, 50]:
             mh.add_hash(h)
         # Create a SourmashSignature object
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -749,7 +749,7 @@ class TestSnipeSig(unittest.TestCase):
 
         # Test resetting when track_abundance is False
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -757,7 +757,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30, 40, 50]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -793,7 +793,7 @@ class TestSnipeSig(unittest.TestCase):
 
         # Test keeping min abundance when track_abundance is False
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -801,7 +801,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30, 40, 50]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -837,7 +837,7 @@ class TestSnipeSig(unittest.TestCase):
 
         # Test keeping max abundance when track_abundance is False
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -845,7 +845,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30, 40, 50]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -890,7 +890,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the trim_below_median method to ensure it raises ValueError when track_abundance is False.
         """
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -898,7 +898,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -940,7 +940,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the count_singletons method to ensure it raises ValueError when track_abundance is False.
         """
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -948,7 +948,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -1000,7 +1000,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the trim_singletons method to ensure it raises ValueError when track_abundance is False.
         """
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -1008,7 +1008,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -1046,7 +1046,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the total_abundance property to ensure it raises ValueError when track_abundance is False.
         """
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -1054,7 +1054,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -1092,7 +1092,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the mean_abundance property to ensure it raises ValueError when track_abundance is False.
         """
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -1100,7 +1100,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
@@ -1138,7 +1138,7 @@ class TestSnipeSig(unittest.TestCase):
         Test the median_abundance property to ensure it raises ValueError when track_abundance is False.
         """
         # Create a signature that does not track abundance
-        mh = smash.minhash.MinHash(
+        mh = sourmash.minhash.MinHash(
             n=0,
             ksize=31,
             scaled=1,
@@ -1146,7 +1146,7 @@ class TestSnipeSig(unittest.TestCase):
         )
         for h in [10, 20, 30]:
             mh.add_hash(h)
-        sig_no_abund = smash.signature.SourmashSignature(
+        sig_no_abund = sourmash.signature.SourmashSignature(
             mh,
             name="test_signature_no_abundance",
             filename="-"
