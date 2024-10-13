@@ -332,10 +332,9 @@ class SnipeSig:
             ValueError: If the other object is not a SnipeSig instance.
         """
         if not isinstance(other, SnipeSig):
-            _e_msg = "Only SnipeSig objects can be used for this operation.\n"
-            _e_msg += f"Invalid type for other: {type(other).__name__} and {type(self).__name__}"
-            self.logger.error(_e_msg)
-            raise ValueError(_e_msg)
+            msg = f"Provided sig ({type(other).__name__}) is not a SnipeSig instance."
+            self.logger.error(msg)
+            raise ValueError(msg)
 
     def __verify_matching_ksize_scale(self, other: 'SnipeSig'):
         r"""
@@ -990,6 +989,198 @@ class SnipeSig:
         )
 
         return summed_signature
+    
+    @staticmethod
+    def get_unique_signatures(signatures: Dict[str, 'SnipeSig']) -> Dict[str, 'SnipeSig']:
+        """
+        Extract unique signatures from a dictionary of SnipeSig instances.
+        
+        For each signature, the unique_sig contains only the hashes that do not overlap with any other signature.
+        
+        Parameters:
+            signatures (Dict[str, SnipeSig]): A dictionary mapping signature names to SnipeSig instances.
+        
+        Returns:
+            Dict[str, SnipeSig]: A dictionary mapping signature names to their unique SnipeSig instances.
+        
+        Raises:
+            ValueError: If the input dictionary is empty or if signatures have mismatched ksize/scale.
+        """
+        if not signatures:
+            raise ValueError("The input signatures dictionary is empty.")
+        
+        # Extract ksize and scale from the first signature
+        first_name, first_sig = next(iter(signatures.items()))
+        ksize = first_sig.ksize
+        scale = first_sig.scale
+        
+        # Verify that all signatures have the same ksize and scale
+        for name, sig in signatures.items():
+            if sig.ksize != ksize or sig.scale != scale:
+                raise ValueError(f"Signature '{name}' has mismatched ksize or scale.")
+        
+        # Aggregate all hashes from all signatures
+        all_hashes = np.concatenate([sig.hashes for sig in signatures.values()])
+        
+        # Count the occurrences of each hash
+        unique_hashes, counts = np.unique(all_hashes, return_counts=True)
+        
+        # Identify hashes that are unique across all signatures (count == 1)
+        unique_across_all = unique_hashes[counts == 1]
+        
+        # Convert to a set for faster membership testing
+        unique_set = set(unique_across_all)
+        
+        unique_signatures = {}
+        
+        for name, sig in signatures.items():
+            # Find hashes in the current signature that are unique across all signatures
+            mask_unique = np.isin(sig.hashes, list(unique_set))
+            
+            # Extract unique hashes and their abundances
+            unique_hashes_sig = sig.hashes[mask_unique]
+            unique_abundances_sig = sig.abundances[mask_unique]
+            
+            # Create a new SnipeSig instance with the unique hashes and abundances
+            unique_sig = SnipeSig.create_from_hashes_abundances(
+                hashes=unique_hashes_sig,
+                abundances=unique_abundances_sig,
+                ksize=ksize,
+                scale=scale,
+                name=f"{name}_unique",
+                filename=None,
+                enable_logging=False,  # Set to True if you want logging for the new signatures
+                sig_type=SigType.SAMPLE  # Adjust sig_type as needed
+            )
+            
+            unique_signatures[name] = unique_sig
+        
+        return unique_signatures
+    
+
+    @classmethod
+    def common_hashes(cls, signatures: List['SnipeSig'], name: str = "common_hashes_signature",
+                      filename: str = None, enable_logging: bool = False) -> 'SnipeSig':
+        r"""
+        Compute the intersection of multiple SnipeSig instances, returning a new SnipeSig containing
+        only the hashes present in all signatures, with abundances set to the minimum abundance across signatures.
+        
+        This method uses a heap-based multi-way merge algorithm for efficient computation,
+        especially when handling a large number of signatures with sorted hashes.
+        
+        **Mathematical Explanation**:
+        
+        Given signatures \( A_1, A_2, \dots, A_n \) with hash sets \( H_1, H_2, \dots, H_n \),
+        the intersection signature \( C \) has:
+        
+        - Hash set:
+        $$
+        H_C = \bigcap_{i=1}^{n} H_i
+        $$
+        
+        - Abundance function:
+        $$
+        a_C(h) = \min_{i=1}^{n} a_i(h), \quad \text{for } h \in H_C
+        $$
+        
+        **Parameters**:
+            - `signatures (List[SnipeSig])`: List of `SnipeSig` instances to compute the intersection.
+            - `name (str)`: Optional name for the resulting signature.
+            - `filename (str)`: Optional filename for the resulting signature.
+            - `enable_logging (bool)`: Flag to enable detailed logging.
+        
+        **Returns**:
+            - `SnipeSig`: A new `SnipeSig` instance representing the intersection of the signatures.
+        
+        **Raises**:
+            - `ValueError`: If the signatures list is empty or if `ksize`/`scale` do not match across signatures.
+        """
+        if not signatures:
+            raise ValueError("No signatures provided for intersection.")
+        
+        # Verify that all signatures have the same ksize and scale
+        first_sig = signatures[0]
+        ksize = first_sig.ksize
+        scale = first_sig.scale
+        for sig in signatures[1:]:
+            if sig.ksize != ksize or sig.scale != scale:
+                raise ValueError("All signatures must have the same ksize and scale.")
+        
+        num_signatures = len(signatures)
+        iterators = []
+        for sig in signatures:
+            it = iter(zip(sig.hashes, sig.abundances))
+            try:
+                first_hash, first_abundance = next(it)
+                iterators.append((first_hash, first_abundance, it))
+            except StopIteration:
+                # One of the signatures is empty; intersection is empty
+                return cls.create_from_hashes_abundances(
+                    hashes=np.array([], dtype=np.uint64),
+                    abundances=np.array([], dtype=np.uint32),
+                    ksize=ksize,
+                    scale=scale,
+                    name=name,
+                    filename=filename,
+                    enable_logging=enable_logging
+                )
+        
+        # Initialize the heap with the first element from each iterator
+        heap = []
+        for idx, (hash_val, abundance, it) in enumerate(iterators):
+            heap.append((hash_val, abundance, idx))
+        heapq.heapify(heap)
+        
+        common_hashes = []
+        common_abundances = []
+        
+        while heap:
+            # Pop all entries with the smallest hash
+            current_hash, current_abundance, idx = heapq.heappop(heap)
+            same_hash_entries = [(current_hash, current_abundance, idx)]
+            
+            # Collect all entries in the heap that have the same current_hash
+            while heap and heap[0][0] == current_hash:
+                h, a, i = heapq.heappop(heap)
+                same_hash_entries.append((h, a, i))
+            
+            if len(same_hash_entries) == num_signatures:
+                # The current_hash is present in all signatures
+                # Take the minimum abundance across signatures
+                min_abundance = min(entry[1] for entry in same_hash_entries)
+                common_hashes.append(current_hash)
+                common_abundances.append(min_abundance)
+            
+            # Push the next element from each iterator that had the current_hash
+            for entry in same_hash_entries:
+                h, a, i = entry
+                try:
+                    next_hash, next_abundance = next(iterators[i][2])
+                    heapq.heappush(heap, (next_hash, next_abundance, i))
+                except StopIteration:
+                    pass  # Iterator exhausted
+        
+        # Convert the results to NumPy arrays
+        if not common_hashes:
+            # No common hashes found
+            unique_hashes = np.array([], dtype=np.uint64)
+            unique_abundances = np.array([], dtype=np.uint32)
+        else:
+            unique_hashes = np.array(common_hashes, dtype=np.uint64)
+            unique_abundances = np.array(common_abundances, dtype=np.uint32)
+        
+        # Create a new SnipeSig instance from the common hashes and abundances
+        common_signature = cls.create_from_hashes_abundances(
+            hashes=unique_hashes,
+            abundances=unique_abundances,
+            ksize=ksize,
+            scale=scale,
+            name=name,
+            filename=filename,
+            enable_logging=enable_logging
+        )
+        
+        return common_signature
 
     def copy(self) -> 'SnipeSig':
         r"""

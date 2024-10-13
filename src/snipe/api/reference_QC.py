@@ -245,7 +245,6 @@ class ReferenceQC:
                  enable_logging: bool = False,
                  chr_name_to_sig: Optional[Dict[str, SnipeSig]] = None,
                  flag_chr_specific: bool = False,
-                 flag_ychr_in_reference: bool = False,
                  **kwargs):
         # Initialize logger
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -282,14 +281,11 @@ class ReferenceQC:
             raise ValueError(f"amplicon_sig must be of type {SigType.AMPLICON}, got {amplicon_sig.sigtype}")
 
 
-        self.flag_ychr_in_reference = flag_ychr_in_reference
         self.logger.debug("Chromosome specific signatures provided.")
         self.flag_activate_sex_metrics = True
         self.chr_name_to_sig: Dict[str, SnipeSig] = chr_name_to_sig
         self.chr_to_specific_kmers: Dict[str, SnipeSig] = {}
         self.flag_chr_specific = flag_chr_specific
-        if self.flag_chr_specific:
-            self._create_chr_specific_sigs_if_needed()
             
 
 
@@ -304,6 +300,8 @@ class ReferenceQC:
         self.genome_stats: Dict[str, Any] = {}
         self.amplicon_stats: Dict[str, Any] = {}
         self.advanced_stats: Dict[str, Any] = {}
+        self.chrs_stats: Dict[str, Dict[str, Any]] = {}
+        self.sex_stats: Dict[str, Any] = {}
         self.predicted_assay_type: str = ""
 
         # Set grey zone thresholds
@@ -326,34 +324,6 @@ class ReferenceQC:
         self.logger.debug("Calculating statistics.")
         self._calculate_stats()
     
-    def _create_chr_specific_sigs_if_needed(self):
-        # process the chromosome specific kmers to make sure no common kmers between them
-        
-        # first we generate chr-specific kmers
-        for chr_name in self.chr_name_to_sig.keys():
-            pass
-            
-        
-        # if the genome has y chromosome, then we need to remove the y chromosome from the reference genome
-        reference_genome: SnipeSig = self.reference_sig
-        if self.flag_ychr_in_reference:
-            reference_genome = reference_genome - self.chr_name_to_sig['y']
-        
-        for chr_name in self.chr_name_to_sig.keys():
-            chr_name = chr_name.lower()
-            
-            if chr_name == 'y':
-                continue
-            self.logger.debug("Processing chromosome: %s", chr_name)
-            if chr_name not in self.chr_name_to_sig:
-                self.logger.error("Chromosome %s not found in the chromosome list.", chr_name)
-                raise ValueError(f"Chromosome {chr_name} not found in the chromosome list.")
-            
-            # log original size and new size of the chr
-            self.logger.debug("Original size of %s: %d", chr_name, len(self.chr_name_to_sig[chr_name]))
-            self.chr_name_to_sig[chr_name] = self.chr_name_to_sig[chr_name] - reference_genome
-            
-            # subtract the genome from the chromosome
 
     def _calculate_stats(self):
         r"""
@@ -376,7 +346,7 @@ class ReferenceQC:
         # ============= GENOME STATS =============
         self.logger.debug("Calculating genome statistics.")
         # Compute intersection of sample and reference genome
-        self.logger.debug("Type of sample_sig: %s | Type of reference_sig: %s", type(self.sample_sig), type(self.reference_sig))
+        self.logger.debug("Type of sample_sig: %s | Type of reference_sig: %s", self.sample_sig.sigtype, self.reference_sig.sigtype)
         sample_genome = self.sample_sig & self.reference_sig
         # Get stats (call get_sample_stats only once)
 
@@ -818,14 +788,163 @@ class ReferenceQC:
         self.logger.debug("Predicted coverage at %.2f-fold increase: %f", extra_fold, predicted_coverage)
         return predicted_coverage
 
-    def calculate_sex_metrics(self) -> Dict[str, Any]:
-        """_summary_
-        
-        1) Load individual chromosome k-mer signatures
-        2) Create a new version so each sig has its own specific hashes (no common hashes)
-        3) Calculate the sample mean abundance for each chromosome
-        4) Calculate the CV (Coefficient of Variation) for the whole sample by using point (3)
-        5) Calculate the x-ploidy score = 
+    def calculate_chromosome_metrics(self, chr_to_sig: Dict[str, SnipeSig]) -> Dict[str, Any]:
+        """
+        Calculate sex-related metrics based on chromosome-specific signatures.
 
+        This method processes a collection of chromosome-specific `SnipeSig` instances to compute
+        the coefficient of variation (CV) of mean abundances across autosomal chromosomes. The
+        method ensures that each chromosome signature contains only unique hashes that do not
+        overlap with hashes from other chromosomes. It excludes sex chromosomes (e.g., Y chromosome)
+        from the analysis.
+
+        **Workflow**:
+        
+        1. **Ensure Uniqueness of Chromosome Signatures**:
+        - Utilizes the `get_unique_signatures` function to filter each chromosome signature
+            so that it contains only hashes unique to that chromosome.
+
+        2. **Compute Mean Abundances**:
+        - Iterates over each autosomal chromosome signature.
+        - For each chromosome, intersects the sample signature (`self.sample_sig`) with the
+            chromosome-specific signature to obtain shared hashes.
+        - Calculates the mean abundance of these shared hashes.
+        - Stores the mean abundances in a dictionary keyed by chromosome name.
+
+        3. **Calculate Coefficient of Variation (CV)**:
+        - Converts the collected mean abundances into a NumPy array.
+        - Computes the CV as the ratio of the standard deviation to the mean of the mean abundances.
+        - Updates the `chrs_stats` attribute with the computed CV under the key `"Autosomal_CV"`.
+
+        **Parameters**:
+            - `chr_to_sig` (`Dict[str, SnipeSig]`):  
+            A dictionary mapping chromosome names (e.g., `'autosomal-1'`, `'autosomal-2'`, `'sex-x'`, `'sex-y'`) to their corresponding
+            `SnipeSig` instances. Each `SnipeSig` should represent the k-mer signature of a specific chromosome.
+
+        **Returns**:
+            - `Dict[str, Any]`:  
+            A dictionary containing the computed metrics. Specifically, it includes:
+                - `"Autosomal_CV"` (`float`):  
+                The coefficient of variation of mean abundances across autosomal chromosomes.
+
+        **Raises**:
+            - `ValueError`:  
+            If `chr_to_sig` is empty or if there is an inconsistency in the signatures' parameters.
+
+        **Usage Example**:
+        
+        ```python
+        # Assume `chr_signatures` is a dictionary of chromosome-specific SnipeSig instances
+        chr_signatures = {
+            "1": sig_chr1,
+            "2": sig_chr2,
+            "X": sig_chrX,
+            "Y": sig_chrY
+        }
+        
+        # Calculate sex-related metrics
+        metrics = sample_instance.calculate_sex_metrics(chr_to_sig=chr_signatures)
+        
+        print(metrics)
+        # Output:
+        # {'Autosomal_CV': 0.15}
+        ```
+
+        **Notes**:
+            - **Exclusion of Sex Chromosomes**:  
+            Chromosomes with names containing the substring `"sex"` (e.g., `'sex-y'`, `'sex-x'`) are excluded from the analysis to focus solely on autosomal chromosomes.
+            
+            - **Signature Intersection**:  
+            The intersection operation (`self.sample_sig & chr_sig`) retains only the hashes present in both the sample signature and the chromosome-specific signature, ensuring that the mean abundance calculation is based on shared k-mers.
         """
         
+        # Implementation of the method
+        # let's make sure all chromosome sigs are unique
+        specific_chr_to_sig = SnipeSig.get_unique_signatures(chr_to_sig)
+        
+        # calculate mean abundance for each chromosome and loaded sample sig
+        chr_to_mean_abundance = {}
+        self.logger.debug("Calculating mean abundance for each chromosome.")
+        for chr_name, chr_sig in specific_chr_to_sig.items():
+            chr_sample_sig = self.sample_sig & chr_sig
+            chr_stats = chr_sample_sig.get_sample_stats
+            chr_to_mean_abundance[chr_name] = chr_stats["mean_abundance"]
+            self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
+        
+
+        # chr_to_mean_abundance but without any chr with partian name sex
+        autosomal_chr_to_mean_abundance = {}
+        for chr_name, mean_abundance in chr_to_mean_abundance.items():
+            if "sex" in chr_name.lower():
+                continue
+            autosomal_chr_to_mean_abundance[chr_name] = mean_abundance
+        
+        
+        # calculate the CV for the whole sample
+        if autosomal_chr_to_mean_abundance:
+            mean_abundances = np.array(list(autosomal_chr_to_mean_abundance.values()), dtype=float)
+            cv = np.std(mean_abundances) / np.mean(mean_abundances) if np.mean(mean_abundances) != 0 else 0.0
+            self.chrs_stats.update({"Autosomal_CV": cv})
+            self.logger.debug("Calculated Autosomal CV: %f", cv)
+        else:
+            self.logger.warning("No autosomal chromosomes were processed. 'Autosomal_CV' set to None.")
+            self.chrs_stats.update({"Autosomal_CV": None})
+        
+        # optional return, not required
+        return self.chrs_stats
+    
+    def calculate_sex_chrs_metrics(self, genome_and_chr_to_sig: Dict[str, SnipeSig]) -> Dict[str, Any]:
+        
+        # sex-x must exist!
+        if 'sex-x' not in genome_and_chr_to_sig:
+            self.logger.error("Chromosome X not found in the chromosome list.")
+            raise ValueError("Chromosome X not found in the chromosome list.")
+        
+        # pop the genome signature with suffix -snipegenome
+        chr_to_sig = {}
+        autosomals_genome_sig: SnipeSig = None
+        self.logger.debug("Splitting the genome from the chromosome signatures.")
+        for key, value in genome_and_chr_to_sig.items():
+            if key.endswith('-snipegenome'):
+                self.logger.debug("\t-Found genome signature.")
+                autosomals_genome_sig = value
+                continue
+            chr_to_sig[key] = value
+            
+
+            
+            
+        # create specific chromosome signatures
+        specific_chr_to_sig = SnipeSig.get_unique_signatures(chr_to_sig)
+        # check if we have Y chr, then delete it from the genome signature
+        if 'sex-y' in chr_to_sig:
+            self.logger.debug("\t-Y chromosome, detected, removing it from the genome signature.")
+            self.logger.debug("\t-Original genome size: %d", len(autosomals_genome_sig))
+            autosomals_genome_sig = autosomals_genome_sig - chr_to_sig['sex-y']
+            self.logger.debug("\t-Updated genome size: %d", len(autosomals_genome_sig))
+        
+        # removing x-chr from the genome signature
+        autosomals_genome_sig = autosomals_genome_sig - chr_to_sig['sex-x']
+        specific_xchr_sig = specific_chr_to_sig["sex-x"] - autosomals_genome_sig
+        
+        sample_specific_xchr_sig = self.sample_sig & specific_xchr_sig
+        sample_autosomal_sig = self.sample_sig & autosomals_genome_sig
+        
+        xhr_in_sample_mean_abundance = sample_specific_xchr_sig.get_sample_stats["mean_abundance"]
+        autosomal_in_sample_mean_abundance = sample_autosomal_sig.get_sample_stats["mean_abundance"]
+        
+        xploidy_score = (xhr_in_sample_mean_abundance / autosomal_in_sample_mean_abundance)
+        xploidy_score *= len(autosomals_genome_sig) / len(specific_xchr_sig)
+        
+        self.logger.debug("X-Ploidy score: %f", xploidy_score)
+        self.sex_stats.update({"X-Ploidy score": xploidy_score})
+        
+        # calculate ycoverage if y-chr is provided
+        if 'sex-y' in specific_chr_to_sig:
+            ychr_specific_kmers = chr_to_sig["sex-y"] - autosomals_genome_sig - specific_xchr_sig
+            ychr_in_sample = self.sample_sig & ychr_specific_kmers
+            autosomals_specific_kmers = self.reference_sig - specific_chr_to_sig["sex-x"] - specific_chr_to_sig['sex-y']
+            _ycoverage = (len(ychr_in_sample) / len(ychr_specific_kmers))
+            _ycoverage /= (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
+            self.logger.debug("Y-Coverage: %f", _ycoverage)
+            self.sex_stats.update({"Y-Coverage": _ycoverage})
