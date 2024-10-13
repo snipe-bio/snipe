@@ -607,9 +607,8 @@ class SnipeSig:
         diff_hashes = np.setdiff1d(self._hashes, other._hashes, assume_unique=True)
 
         if diff_hashes.size == 0:
-            _e_msg = "Difference operation resulted in zero hashes, which is not allowed."
-            self.logger.error(_e_msg)
-            raise RuntimeError(_e_msg)
+            _e_msg = f"Difference operation resulted in zero hashes, which is not allowed for {self._name} and {other._name}."
+            self.logger.warning(_e_msg)
 
         # Get the indices of the hashes in self
         mask = np.isin(self._hashes, diff_hashes, assume_unique=True)
@@ -1391,8 +1390,8 @@ class SnipeSig:
             self.logger.debug("No abundances to calculate mean.")
             return 0.0
 
-        mean = int(np.mean(self._abundances))
-        self.logger.debug("Mean abundance: %d", mean)
+        mean = float(np.mean(self._abundances))  # Changed to float
+        self.logger.debug("Mean abundance: %f", mean)
         return mean
 
     @property
@@ -1439,16 +1438,15 @@ class SnipeSig:
         return stats
 
     @property
-    def median_abundance(self) -> int:
+    def median_abundance(self) -> float:
         r"""
         Return the median abundance.
 
         Returns:
-            int: Median abundance.
+            float: Median abundance.
 
         Raises:
             ValueError: If the signature does not track abundance.
-
         """
         self._validate_abundance_operation(None, "calculate median abundance")
 
@@ -1456,6 +1454,6 @@ class SnipeSig:
             self.logger.debug("No abundances to calculate median.")
             return 0.0
 
-        median = int(np.median(self._abundances))
-        self.logger.debug("Median abundance: %d", median)
+        median = float(np.median(self._abundances))  # Changed to float
+        self.logger.debug("Median abundance: %f", median)
         return median

@@ -264,6 +264,30 @@ class ReferenceQC:
         for key, value in locals().items():
             self.logger.debug("\t%s: %s", key, value)
             
+            
+        # Validate that all signatures have the same ksize and scale
+        self.logger.debug("Validating ksize and scale across signatures.")
+        if sample_sig.ksize != reference_sig.ksize:
+            self.logger.error("K-mer sizes do not match: sample_sig.ksize=%d vs reference_sig.ksize=%d",
+                              sample_sig.ksize, reference_sig.ksize)
+            raise ValueError(f"sample_sig kszie ({sample_sig.ksize}) does not match reference_sig ksize ({reference_sig.ksize}).")
+        if sample_sig.scale != reference_sig.scale:
+            self.logger.error("Scale values do not match: sample_sig.scale=%d vs reference_sig.scale=%d",
+                              sample_sig.scale, reference_sig.scale)
+            raise ValueError(f"sample_sig scale ({sample_sig.scale}) does not match reference_sig scale ({reference_sig.scale}).")
+        
+        if amplicon_sig is not None:
+            if amplicon_sig.ksize != sample_sig.ksize:
+                self.logger.error("K-mer sizes do not match: amplicon_sig.ksize=%d vs sample_sig.ksize=%d",
+                                  amplicon_sig.ksize, sample_sig.ksize)
+                raise ValueError(f"amplicon_sig ksize ({amplicon_sig.ksize}) does not match sample_sig ksize ({sample_sig.ksize}).")
+            if amplicon_sig.scale != sample_sig.scale:
+                self.logger.error("Scale values do not match: amplicon_sig.scale=%d vs sample_sig.scale=%d",
+                                  amplicon_sig.scale, sample_sig.scale)
+                raise ValueError(f"amplicon_sig scale ({amplicon_sig.scale}) does not match sample_sig scale ({sample_sig.scale}).")
+
+        self.logger.debug("All signatures have matching ksize and scale.")
+            
 
         # Verify signature types
         if sample_sig._type != SigType.SAMPLE:
@@ -437,6 +461,7 @@ class ReferenceQC:
         aggregated_stats.update(self.genome_stats)
         # Include amplicon_stats if available
         if self.amplicon_sig is not None:
+            self.logger.debug("While aggregating stats; amplicon signature provided.")
             aggregated_stats.update(self.amplicon_stats)
             aggregated_stats["Predicted Assay Type"] = self.predicted_assay_type
                     
@@ -488,6 +513,7 @@ class ReferenceQC:
         })
 
         if self.amplicon_sig is not None:
+            self.logger.debug("Calculating advanced amplicon statistics.")
             # Amplicon stats for median-trimmed sample
             median_trimmed_sample_amplicon = median_trimmed_sample_sig & self.amplicon_sig
             median_trimmed_sample_amplicon_stats = median_trimmed_sample_amplicon.get_sample_stats
@@ -502,6 +528,7 @@ class ReferenceQC:
                 ),
             })
             # Additional advanced relative metrics
+            self.logger.debug("Calculating advanced relative metrics.")
             self.amplicon_stats["Median-trimmed relative coverage"] = (
                 self.advanced_stats["Median-trimmed Amplicon coverage index"] / self.advanced_stats["Median-trimmed Genome coverage index"]
                 if self.advanced_stats["Median-trimmed Genome coverage index"] > 0 else 0
@@ -515,6 +542,8 @@ class ReferenceQC:
                 "Median-trimmed relative coverage": self.amplicon_stats["Median-trimmed relative coverage"],
                 "Median-trimmed relative mean abundance": self.amplicon_stats["Median-trimmed relative mean abundance"],
             })
+            
+            self.advanced_stats.update(self.amplicon_stats)
 
     def split_sig_randomly(self, n: int) -> List[SnipeSig]:
         """
@@ -598,6 +627,9 @@ class ReferenceQC:
 
         cumulative_snipe_sig = split_sigs[0].copy()
         cumulative_total_abundance = cumulative_snipe_sig.total_abundance
+        
+        #! force conversion to GENOME
+        roi_reference_sig.sigtype = SigType.GENOME
 
         # Compute initial coverage index
         cumulative_qc = ReferenceQC(
@@ -1002,8 +1034,14 @@ class ReferenceQC:
         
         # Ensure that the chromosome X signature exists
         if 'sex-x' not in genome_and_chr_to_sig:
-            self.logger.error("Chromosome X ('sex-x') not found in the provided signatures.")
-            raise ValueError("Chromosome X ('sex-x') not found in the provided signatures.")
+            self.logger.warning("Chromosome X ('sex-x') not found in the provided signatures. X-Ploidy score will be set to zero.")
+            # set sex-x to an empty signature
+            genome_and_chr_to_sig['sex-x'] = SnipeSig.create_from_hashes_abundances(
+                hashes=np.array([], dtype=np.uint64),
+                abundances=np.array([], dtype=np.uint32),
+                ksize=genome_and_chr_to_sig[list(genome_and_chr_to_sig.keys())[0]].ksize,
+                scale=genome_and_chr_to_sig[list(genome_and_chr_to_sig.keys())[0]].scale,
+            )
         
         # Separate the autosomal genome signature from chromosome-specific signatures
         chr_to_sig: Dict[str, SnipeSig] = {}
@@ -1034,13 +1072,19 @@ class ReferenceQC:
         # Remove X chromosome hashes from the autosomal genome signature
         self.logger.debug("Removing X chromosome ('sex-x') hashes from the autosomal genome signature.")
         autosomals_genome_sig = autosomals_genome_sig - chr_to_sig['sex-x']
+        self.logger.debug("\t- Updated autosomal genome size after removing X chromosome: %d hashes.", len(autosomals_genome_sig))
         
         # Derive the X chromosome-specific signature by subtracting autosomal genome hashes
         specific_xchr_sig = specific_chr_to_sig["sex-x"] - autosomals_genome_sig
+        self.logger.debug("\t-Derived X chromosome-specific signature size: %d hashes.", len(specific_xchr_sig))
         
         # Intersect the sample signature with chromosome-specific signatures
         sample_specific_xchr_sig = self.sample_sig & specific_xchr_sig
+        if len(sample_specific_xchr_sig) == 0:
+            self.logger.warning("No X chromosome-specific k-mers found in the sample signature.")
+        self.logger.debug("\t-Intersected sample signature with X chromosome-specific k-mers = %d hashes.", len(sample_specific_xchr_sig))
         sample_autosomal_sig = self.sample_sig & autosomals_genome_sig
+        self.logger.debug("\t-Intersected sample signature with autosomal genome k-mers = %d hashes.", len(sample_autosomal_sig))
         
         # Retrieve mean abundances
         xchr_mean_abundance = sample_specific_xchr_sig.get_sample_stats.get("mean_abundance", 0.0)
@@ -1063,9 +1107,13 @@ class ReferenceQC:
             
             # Derive Y chromosome-specific k-mers by excluding autosomal and X chromosome k-mers
             ychr_specific_kmers = chr_to_sig["sex-y"] - autosomals_genome_sig - specific_xchr_sig
+            self.logger.debug("\t-Derived Y chromosome-specific signature size: %d hashes.", len(ychr_specific_kmers))
             
             # Intersect Y chromosome-specific k-mers with the sample signature
             ychr_in_sample = self.sample_sig & ychr_specific_kmers
+            self.logger.debug("\t-Intersected sample signature with Y chromosome-specific k-mers = %d hashes.", len(ychr_in_sample))
+            if len(ychr_in_sample) == 0:
+                self.logger.warning("No Y chromosome-specific k-mers found in the sample signature.")
             
             # Derive autosomal-specific k-mers by excluding X and Y chromosome k-mers from the reference signature
             autosomals_specific_kmers = self.reference_sig - specific_chr_to_sig["sex-x"] - specific_chr_to_sig['sex-y']

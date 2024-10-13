@@ -270,9 +270,10 @@ class TestSnipeSig(unittest.TestCase):
         Test the difference_sigs method when the result is an empty signature.
         """
         sig1 = self.snipe_sig.intersection_sigs(self.snipe_sig_2)
-        with self.assertRaises(RuntimeError):
-            # Subtract the second signature again to remove all hashes
-            sig1.difference_sigs(self.snipe_sig_2)
+        # Subtract the second signature again to remove all hashes
+        sig3 = sig1.difference_sigs(self.snipe_sig_2)
+        # assert zero hashes
+        self.assertEqual(len(sig3), 0)
 
     def test_symmetric_difference_sigs(self):
         """
