@@ -16,7 +16,7 @@ from snipe.api.reference_QC import ReferenceQC
 
 from snipe.cli.cli_qc import qc as cli_qc
 from snipe.cli.cli_sketch import sketch as cli_sketch
-
+from snipe.cli.cli_ops import ops as cli_ops
 
 # pylint: disable=logging-fstring-interpolation
 
@@ -37,7 +37,7 @@ def cli():
 
 cli.add_command(cli_qc)
 cli.add_command(cli_sketch)
-
+cli.add_command(cli_ops)
 
 if __name__ == '__main__':
     cli()

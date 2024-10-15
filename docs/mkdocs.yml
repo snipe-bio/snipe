@@ -86,6 +86,7 @@ nav:
   - CLI:
       - Sketch: CLI_Sketch.md
       - QC: CLI_QC.md
+      - Operations: CLI_Ops.md
 
 
 
