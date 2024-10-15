@@ -2,18 +2,22 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://snipe-bio.github.io/snipe/</loc>
-         <lastmod>2024-10-13</lastmod>
+         <lastmod>2024-10-15</lastmod>
     </url>
     <url>
          <loc>https://snipe-bio.github.io/snipe/ReferenceQC/</loc>
-         <lastmod>2024-10-13</lastmod>
+         <lastmod>2024-10-15</lastmod>
+    </url>
+    <url>
+         <loc>https://snipe-bio.github.io/snipe/Sketch/</loc>
+         <lastmod>2024-10-15</lastmod>
     </url>
     <url>
          <loc>https://snipe-bio.github.io/snipe/SnipeSig/</loc>
-         <lastmod>2024-10-13</lastmod>
+         <lastmod>2024-10-15</lastmod>
     </url>
     <url>
          <loc>https://snipe-bio.github.io/snipe/cli/</loc>
-         <lastmod>2024-10-13</lastmod>
+         <lastmod>2024-10-15</lastmod>
     </url>
 </urlset>
