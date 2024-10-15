@@ -14,6 +14,8 @@ from snipe.api.sketch import SnipeSketch
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.reference_QC import ReferenceQC
 
+import concurrent.futures
+import signal
 
 def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str],
                   advanced: bool, roi: bool, debug: bool,
@@ -426,7 +428,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     if samples_from_file:
         logger.debug(f"Reading samples from file: {samples_from_file}")
         try:
-            with open(samples_from_file, encoding='utf-8') as f:
+            with open(samples_from_file, 'r', encoding='utf-8') as f:
                 file_samples = {line.strip() for line in f if line.strip()}
             samples_set.update(file_samples)
             logger.debug(f"Collected {len(file_samples)} samples from file.")
@@ -492,32 +494,58 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             "ychr": ychr,
             "vars_paths": vars_paths
         })
-    
-    
-    # Process samples in parallel with progress bar
-    results = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
-        # Submit all tasks
-        futures = {
-            executor.submit(process_sample, **args): args for args in dict_process_args
-        }
-        # Iterate over completed futures with a progress bar
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
-            sample = futures[future]
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as exc:
-                logger.error(f"Sample {sample} generated an exception: {exc}")
-                results.append({
-                    "sample": os.path.splitext(os.path.basename(sample))[0],
-                    "file_path": sample,
-                    "QC_Error": str(exc)
-                })
 
-    # Create pandas DataFrame
-    logger.info("Aggregating results into DataFrame.")
-    df = pd.DataFrame(results)
+    results = []
+    
+    # Define a handler for graceful shutdown
+    def shutdown(signum, frame):
+        logger.warning("Shutdown signal received. Terminating all worker processes...")
+        executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(1)
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
+    
+    try:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
+            futures = {
+                executor.submit(process_sample, **args): args for args in dict_process_args
+            }
+
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
+                sample = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    logger.error(f"Sample {sample['sample_path']} generated an exception: {exc}")
+                    results.append({
+                        "sample": os.path.splitext(os.path.basename(sample['sample_path']))[0],
+                        "file_path": sample['sample_path'],
+                        "QC_Error": str(exc)
+                    })
+    except KeyboardInterrupt:
+        logger.warning("KeyboardInterrupt received. Shutting down...")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}")
+        sys.exit(1)
+
+    # Separate successful and failed results
+    succeeded = [res for res in results if "QC_Error" not in res]
+    failed = [res for res in results if "QC_Error" in res]
+
+    # Handle complete failure
+    if len(succeeded) == 0:
+        logger.error("All samples failed during QC processing. Output TSV will not be generated.")
+        sys.exit(1)
+
+    # Prepare the command-line invocation for comments
+    command_invocation = ' '.join(sys.argv)
+
+    # Create pandas DataFrame for succeeded samples
+    df = pd.DataFrame(succeeded)
 
     # Reorder columns to have 'sample' and 'file_path' first, if they exist
     cols = list(df.columns)
@@ -529,13 +557,24 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     reordered_cols += cols
     df = df[reordered_cols]
 
-    # Export to TSV
+    # Export to TSV with comments
     try:
-        df.to_csv(output, sep='\t', index=False)
+        with open(output, 'w', encoding='utf-8') as f:
+            # Write comment with command invocation
+            f.write(f"# Command: {command_invocation}\n")
+            # Write the DataFrame to the file
+            df.to_csv(f, sep='\t', index=False)
         logger.info(f"QC results successfully exported to {output}")
     except Exception as e:
         logger.error(f"Failed to export QC results to {output}: {e}")
         sys.exit(1)
+
+    # Report failed samples if any
+    if failed:
+        failed_samples = [res['sample'] for res in failed]
+        logger.warning(f"The following {len(failed_samples)} sample(s) failed during QC processing:")
+        for sample in failed_samples:
+            logger.warning(f"- {sample}")
 
     end_time = time.time()
     elapsed_time = end_time - start_time

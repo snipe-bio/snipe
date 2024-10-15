@@ -1,10 +1,12 @@
 import heapq
 import logging
+
+import sourmash.save_load
 from snipe.api.enums import SigType
 from typing import Any, Dict, Iterator, List, Optional, Union
 import numpy as np
 import sourmash
-
+import os
 
 # Configure the root logger to CRITICAL to suppress unwanted logs by default
 logging.basicConfig(level=logging.CRITICAL)
@@ -150,6 +152,13 @@ class SnipeSig:
         self._name = _sourmash_sig.name
         self._filename = _sourmash_sig.filename
         self._track_abundance = _sourmash_sig.minhash.track_abundance
+        
+        if self._name.endswith("-snipesample"):
+            self._name = self._name.replace("-snipesample", "")
+            self.logger.debug("Found a sample signature with the snipe suffix `-snipesample`. Restoring original name `%s`.", self._name)
+        elif self._name.endswith("-snipeamplicon"):
+            self._name = self._name.replace("-snipeamplicon", "")
+            self.logger.debug("Found an amplicon signature with the snipe suffix `-snipeamplicon`. Restoring original name `%s`.", self._name)
 
         # If the signature does not track abundance, assume abundance of 1 for all hashes
         if not self._track_abundance:
@@ -485,16 +494,34 @@ class SnipeSig:
         self.sourmash_sig = sourmash.signature.SourmashSignature(mh, name=self._name, filename=self._filename)
         self.logger.debug("Conversion to sourmash.signature.SourmashSignature completed.")
 
-    def export(self, path) -> None:
+    def export(self, path, force=False) -> None:
         r"""
         Export the signature to a file.
 
         Parameters:
             path (str): The path to save the signature to.
+            force (bool): Flag to overwrite the file if it already exists.
         """
         self._convert_to_sourmash_signature()
-        with open(str(path), "wb") as fp:
-            sourmash.signature.save_signatures_to_json([self.sourmash_sig], fp)
+        if path.endswith(".sig"):
+            self.logger.debug("Exporting signature to a .sig file.")
+            with open(str(path), "wb") as fp:
+                sourmash.signature.save_signatures_to_json([self.sourmash_sig], fp)
+        # sourmash.save_load.SaveSignatures_SigFile
+                
+        elif path.endswith(".zip"):
+            if os.path.exists(path): 
+                raise FileExistsError("Output file already exists.")
+            try:
+                with sourmash.save_load.SaveSignatures_ZipFile(path) as save_sigs:
+                    save_sigs.add(self.sourmash_sig)
+            except Exception as e:
+                logging.error("Failed to export signatures to zip: %s", e)
+                raise Exception(f"Failed to export signatures to zip: {e}") from e
+        else:
+            raise ValueError("Output file must be either a .sig or .zip file.")
+        
+            
 
     def export_to_string(self):
         r"""
@@ -924,8 +951,6 @@ class SnipeSig:
         for sig in signatures[1:]:
             if sig.ksize != ksize or sig.scale != scale:
                 raise ValueError("All signatures must have the same ksize and scale.")
-            if sig.track_abundance != track_abundance:
-                raise ValueError("All signatures must have the same track_abundance setting.")
 
         # Initialize iterators for each signature's hashes and abundances
         iterators = []

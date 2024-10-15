@@ -10,7 +10,6 @@ from snipe.api.enums import SigType
 import os
 import requests
 from tqdm import tqdm
-import cgi
 from urllib.parse import urlparse
 from typing import Optional
 import sourmash
@@ -1027,7 +1026,7 @@ class ReferenceQC:
         predicted_coverage = min(predicted_coverage, max_coverage)
 
         self.logger.debug("Predicted coverage at %.2f-fold increase: %f", extra_fold, predicted_coverage)
-        return predicted_coverage
+        return float(predicted_coverage)
 
     def calculate_chromosome_metrics(self, chr_to_sig: Dict[str, SnipeSig]) -> Dict[str, Any]:
         r"""
@@ -1110,8 +1109,23 @@ class ReferenceQC:
             chr_stats = chr_sample_sig.get_sample_stats
             chr_to_mean_abundance[chr_name] = chr_stats["mean_abundance"]
             self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
-            
-        self.chrs_stats.update(chr_to_mean_abundance)
+        
+        # chromosomes are numberd from 1 to ..., sort them by numer (might be string for sex chromosomes) then prefix them with chr-
+        def sort_chromosomes(chr_name):
+            try:
+                # Try to convert to integer for numeric chromosomes
+                return (0, int(chr_name))
+            except ValueError:
+                # Non-numeric chromosomes (like 'x', 'y', 'z', etc.)
+                return (1, chr_name)
+
+        # Create a new dictionary with sorted chromosome names and prefixed with 'chr-'
+        sorted_chr_to_mean_abundance = {
+            f"chr-{chr_name}": chr_to_mean_abundance[chr_name]
+            for chr_name in sorted(chr_to_mean_abundance, key=sort_chromosomes)
+        }
+        
+        self.chrs_stats.update(sorted_chr_to_mean_abundance)
 
         # chr_to_mean_abundance but without any chr with partial name sex
         autosomal_chr_to_mean_abundance = {}
