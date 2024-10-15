@@ -5,8 +5,17 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 from scipy.optimize import OptimizeWarning, curve_fit
-from snipe.api import SnipeSig
+from snipe.api.snipe_sig import SnipeSig
 from snipe.api.enums import SigType
+import os
+import requests
+from tqdm import tqdm
+import cgi
+from urllib.parse import urlparse
+from typing import Optional
+import sourmash
+
+# pylint disable C0301
 
 
 class ReferenceQC:
@@ -245,6 +254,11 @@ class ReferenceQC:
                  **kwargs):
         # Initialize logger
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Initialize split cache
+        self._split_cache: Dict[int, List[SnipeSig]] = {}
+        self.logger.debug("Initialized split cache.")
+
 
         if enable_logging:
             self.logger.setLevel(logging.DEBUG)
@@ -318,6 +332,8 @@ class ReferenceQC:
         self.advanced_stats: Dict[str, Any] = {}
         self.chrs_stats: Dict[str, Dict[str, Any]] = {}
         self.sex_stats: Dict[str, Any] = {}
+        self.predicted_error_contamination_index: Dict[str, Any] = {}
+        self.vars_nonref_stats: Dict[str, Any] = {}
         self.predicted_assay_type: str = ""
 
         # Set grey zone thresholds
@@ -367,10 +383,10 @@ class ReferenceQC:
         # Get stats (call get_sample_stats only once)
 
         # Log hashes and abundances for both sample and reference
-        self.logger.debug("Sample hashes: %s", self.sample_sig.hashes)
-        self.logger.debug("Sample abundances: %s", self.sample_sig.abundances)
-        self.logger.debug("Reference hashes: %s", self.reference_sig.hashes)
-        self.logger.debug("Reference abundances: %s", self.reference_sig.abundances)
+        # self.logger.debug("Sample hashes: %s", self.sample_sig.hashes)
+        # self.logger.debug("Sample abundances: %s", self.sample_sig.abundances)
+        # self.logger.debug("Reference hashes: %s", self.reference_sig.hashes)
+        # self.logger.debug("Reference abundances: %s", self.reference_sig.abundances)
 
         sample_genome_stats = sample_genome.get_sample_stats
 
@@ -411,7 +427,7 @@ class ReferenceQC:
                 ),
             }
 
-            # Relative metrics
+            # ============= RELATIVE STATS =============
             self.amplicon_stats["Relative total abundance"] = (
                 self.amplicon_stats["Amplicon k-mers total abundance"] / self.genome_stats["Genomic k-mers total abundance"]
                 if self.genome_stats["Genomic k-mers total abundance"] > 0 else 0
@@ -421,7 +437,6 @@ class ReferenceQC:
                 if self.genome_stats["Genome coverage index"] > 0 else 0
             )
 
-            # Predicted assay type
             relative_total_abundance = self.amplicon_stats["Relative total abundance"]
             if relative_total_abundance <= self.relative_total_abundance_grey_zone[0]:
                 self.predicted_assay_type = "WGS"
@@ -432,7 +447,27 @@ class ReferenceQC:
                 distance_to_wgs = abs(relative_total_abundance - self.relative_total_abundance_grey_zone[0])
                 distance_to_wxs = abs(relative_total_abundance - self.relative_total_abundance_grey_zone[1])
                 self.predicted_assay_type = "WGS" if distance_to_wgs < distance_to_wxs else "WXS"
+            
+            
             self.logger.debug("Predicted assay type: %s", self.predicted_assay_type)
+        
+        self.logger.debug("Calculuating error and contamination indices.")
+        try:
+            sample_nonref = self.sample_sig - self.reference_sig
+            sample_nonref_singletons = sample_nonref.count_singletons()
+            sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
+            sample_total_abundance = self.sample_sig.total_abundance
+            
+            predicted_error_index = sample_nonref_singletons / sample_total_abundance
+            predicted_contamination_index = sample_nonref_non_singletons / sample_total_abundance
+
+            # predict error and contamination index
+            self.predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
+            self.predicted_error_contamination_index["Sequencing errors index"] = predicted_error_index
+        # except zero division error
+        except ZeroDivisionError:
+            self.logger.error("Please check the sample signature, it seems to be empty.")
+        
 
     def get_aggregated_stats(self, include_advanced: bool = False) -> Dict[str, Any]:
         r"""
@@ -469,11 +504,17 @@ class ReferenceQC:
         
         if self.sex_stats:
             aggregated_stats.update(self.sex_stats)
+            
+        if self.vars_nonref_stats:
+            aggregated_stats.update(self.vars_nonref_stats)
 
         # Include advanced_stats if requested
         if include_advanced:
             self._calculate_advanced_stats()
             aggregated_stats.update(self.advanced_stats)
+            
+        if self.predicted_error_contamination_index:
+            aggregated_stats.update(self.predicted_error_contamination_index)
         
         return aggregated_stats
 
@@ -646,7 +687,15 @@ class ReferenceQC:
             print(f"Signature part {idx}: {sig}")
         ```
         """
-        self.logger.debug("Splitting sample signature into %d random parts.", n)
+        self.logger.debug("Attempting to split sample signature into %d random parts.", n)
+
+        # Check if the split for this n is already cached
+        if n in self._split_cache:
+            self.logger.debug("Using cached split signatures for n=%d.", n)
+            # Return deep copies to prevent external modifications
+            return [sig.copy() for sig in self._split_cache[n]]
+
+        self.logger.debug("No cached splits found for n=%d. Proceeding to split.", n)
         # Get k-mers and abundances
         hash_to_abund = dict(zip(self.sample_sig.hashes, self.sample_sig.abundances))
         random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
@@ -662,6 +711,11 @@ class ReferenceQC:
             )
             for i, kmer_dict in enumerate(random_split_sigs)
         ]
+
+        # Cache the split signatures
+        self._split_cache[n] = split_sigs
+        self.logger.debug("Cached split signatures for n=%d.", n)
+
         return split_sigs
     
     @staticmethod
@@ -767,15 +821,19 @@ class ReferenceQC:
             roi_reference_sig = self.reference_sig
             self.logger.debug("Using reference genome signature as ROI reference.")
 
-        # Split the sample signature into n random parts
+        # Split the sample signature into n random parts (cached if available)
         split_sigs = self.split_sig_randomly(n)
 
         coverage_depth_data = []
 
+        if not split_sigs:
+            self.logger.error("No split signatures available. Cannot calculate coverage vs depth.")
+            return coverage_depth_data
+
         cumulative_snipe_sig = split_sigs[0].copy()
         cumulative_total_abundance = cumulative_snipe_sig.total_abundance
 
-        #! force conversion to GENOME
+        # Force conversion to GENOME
         roi_reference_sig.sigtype = SigType.GENOME
 
         # Compute initial coverage index
@@ -785,13 +843,15 @@ class ReferenceQC:
             enable_logging=self.enable_logging
         )
         cumulative_stats = cumulative_qc.get_aggregated_stats()
-        cumulative_coverage_index = cumulative_stats["Genome coverage index"]
+        cumulative_coverage_index = cumulative_stats.get("Genome coverage index", 0.0)
 
         coverage_depth_data.append({
             "cumulative_parts": 1,
             "cumulative_total_abundance": cumulative_total_abundance,
             "cumulative_coverage_index": cumulative_coverage_index,
         })
+
+        self.logger.debug("Added initial coverage depth data for part 1.")
 
         # Iterate over the rest of the parts
         for i in range(1, n):
@@ -808,13 +868,15 @@ class ReferenceQC:
                 enable_logging=self.enable_logging
             )
             cumulative_stats = cumulative_qc.get_aggregated_stats()
-            cumulative_coverage_index = cumulative_stats["Genome coverage index"]
+            cumulative_coverage_index = cumulative_stats.get("Genome coverage index", 0.0)
 
             coverage_depth_data.append({
                 "cumulative_parts": i + 1,
                 "cumulative_total_abundance": cumulative_total_abundance,
                 "cumulative_coverage_index": cumulative_coverage_index,
             })
+
+            self.logger.debug("Added coverage depth data for part %d.", i + 1)
 
         self.logger.debug("Coverage vs depth calculation completed.")
         return coverage_depth_data
@@ -1034,17 +1096,22 @@ class ReferenceQC:
         
         # Implementation of the method
         # let's make sure all chromosome sigs are unique
+        self.logger.debug("Computing specific chromosome hashes for %s.", ','.join(chr_to_sig.keys()))
+        self.logger.debug(f"\t-All hashes for chromosomes before getting unique sigs {len(SnipeSig.sum_signatures(list(chr_to_sig.values())))}")
         specific_chr_to_sig = SnipeSig.get_unique_signatures(chr_to_sig)
+        self.logger.debug(f"\t-All hashes for chromosomes after getting unique sigs {len(SnipeSig.sum_signatures(list(specific_chr_to_sig.values())))}")
         
         # calculate mean abundance for each chromosome and loaded sample sig
         chr_to_mean_abundance = {}
         self.logger.debug("Calculating mean abundance for each chromosome.")
         for chr_name, chr_sig in specific_chr_to_sig.items():
+            self.logger.debug("Intersecting %s (%d) with %s (%d)", self.sample_sig.name, len(self.sample_sig), chr_name, len(chr_sig))
             chr_sample_sig = self.sample_sig & chr_sig
             chr_stats = chr_sample_sig.get_sample_stats
             chr_to_mean_abundance[chr_name] = chr_stats["mean_abundance"]
             self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
-        
+            
+        self.chrs_stats.update(chr_to_mean_abundance)
 
         # chr_to_mean_abundance but without any chr with partial name sex
         autosomal_chr_to_mean_abundance = {}
@@ -1266,5 +1333,379 @@ class ReferenceQC:
             
             self.logger.debug("Calculated Y-Coverage: %.4f", ycoverage)
             self.sex_stats.update({"Y-Coverage": ycoverage})
-        
+
         return self.sex_stats
+        
+        
+        
+    def nonref_consume_from_vars(self, *, vars: Dict[str, SnipeSig], vars_order: List[str], **kwargs) -> Dict[str, float]:
+        r"""
+        Consume and analyze non-reference k-mers from provided variable signatures.
+
+        This method processes non-reference k-mers in the sample signature by intersecting them with a set of
+        variable-specific `SnipeSig` instances. It calculates coverage and total abundance metrics for each
+        variable in a specified order, ensuring that each non-reference k-mer is accounted for without overlap
+        between variables. The method updates internal statistics that reflect the distribution of non-reference
+        k-mers across the provided variables.
+
+        **Process Overview**:
+
+        1. **Validation**:
+        - Verifies that all variable names specified in `vars_order` are present in the `vars` dictionary.
+        - Raises a `ValueError` if any variable in `vars_order` is missing from `vars`.
+
+        2. **Non-Reference K-mer Extraction**:
+        - Computes the set of non-reference non-singleton k-mers by subtracting the reference signature from the sample signature.
+        - If no non-reference k-mers are found, the method logs a warning and returns an empty dictionary.
+
+        3. **Variable-wise Consumption**:
+        - Iterates over each variable name in `vars_order`.
+        - For each variable:
+            - Intersects the remaining non-reference k-mers with the variable-specific signature.
+            - Calculates the total abundance and coverage index for the intersected k-mers.
+            - Updates the `vars_nonref_stats` dictionary with the computed metrics.
+            - Removes the consumed k-mers from the remaining non-reference set to prevent overlap.
+
+        4. **Final State Logging**:
+        - Logs the final size and total abundance of the remaining non-reference k-mers after consumption.
+
+        **Parameters**:
+
+            - `vars` (`Dict[str, SnipeSig]`):  
+            A dictionary mapping variable names to their corresponding `SnipeSig` instances. Each `SnipeSig` 
+            represents a set of k-mers associated with a specific non-reference category or variable.
+
+            - `vars_order` (`List[str]`):  
+            A list specifying the order in which variables should be processed. The order determines the priority 
+            of consumption, ensuring that earlier variables in the list have their k-mers accounted for before 
+            later ones.
+
+            - `**kwargs`:  
+            Additional keyword arguments. Reserved for future extensions and should not be used in the current context.
+
+        **Returns**:
+
+            - `Dict[str, float]`:  
+            A dictionary containing statistics for each variable name in `vars_order`, 
+                - `"non-genomic total k-mer abundance"` (`float`):  
+                    The sum of abundances of non-reference k-mers associated with the variable.
+                - `"non-genomic coverage index"` (`float`):  
+                    The ratio of unique non-reference k-mers associated with the variable to the total number 
+                    of non-reference k-mers in the sample before consumption.
+
+            Example Output:
+            ```python
+            {
+                "variable_A non-genomic total k-mer abundance": 1500.0,
+                "variable_A non-genomic coverage index": 0.20
+                "variable_B non-genomic total k-mer abundance": 3500.0,
+                "variable_B non-genomic coverage index": 0.70
+                "non-var non-genomic total k-mer abundance": 0.10,
+                "non-var non-genomic coverage index": 218
+            }
+            ```
+
+        **Raises**:
+
+            - `ValueError`:  
+            - If any variable specified in `vars_order` is not present in the `vars` dictionary.
+            - This ensures that all variables intended for consumption are available for processing.
+
+        **Usage Example**:
+
+        ```python
+        # Assume `variables_signatures` is a dictionary of variable-specific SnipeSig instances
+        variables_signatures = {
+            "GTDB": sig_GTDB,
+            "VIRALDB": sig_VIRALDB,
+            "contaminant_X": sig_contaminant_x
+        }
+
+        # Define the order in which variables should be processed
+        processing_order = ["GTDB", "VIRALDB", "contaminant_X"]
+
+        # Consume non-reference k-mers and retrieve statistics
+        nonref_stats = qc.nonref_consume_from_vars(vars=variables_signatures, vars_order=processing_order)
+
+        print(nonref_stats)
+        # Output Example:
+        # {
+        #     "GTDB non-genomic total k-mer abundance": 1500.0,
+        #     "GTDB non-genomic coverage index": 0.2,
+        #     "VIRALDB non-genomic total k-mer abundance": 3500.0,
+        #     "VIRALDB non-genomic coverage index": 0.70,
+        #     "contaminant_X non-genomic total k-mer abundance": 0.0,
+        #     "contaminant_X non-genomic coverage index": 0.0,
+        #     "non-var non-genomic total k-mer abundance": 100.0,
+        #     "non-var non-genomic coverage index": 0.1
+        # }
+        ```
+
+        **Notes**:
+
+            - **Variable Processing Order**:  
+            The `vars_order` list determines the sequence in which variables are processed. This order is crucial
+            when there is potential overlap in k-mers between variables, as earlier variables in the list have 
+            higher priority in consuming shared k-mers.
+
+            - **Non-Reference K-mers Definition**:  
+            Non-reference k-mers are defined as those present in the sample signature but absent in the reference 
+            signature. This method focuses on characterizing these unique k-mers relative to provided variables.
+        """
+        
+        # check the all vars in vars_order are in vars
+        if not all([var in vars for var in vars_order]):
+            # report dict keys, and the vars order
+            self.logger.debug("Provided vars_order: %s, and vars keys: %s", vars_order, list(vars.keys()))
+            self.logger.error("All variables in vars_order must be present in vars.")
+            raise ValueError("All variables in vars_order must be present in vars.")
+        
+        self.logger.debug("Consuming non-reference k-mers from provided variables.")
+        self.logger.debug("\t-Current size of the sample signature: %d hashes.", len(self.sample_sig))
+        
+        sample_nonref = self.sample_sig - self.reference_sig
+
+        sample_nonref.trim_singletons()
+        
+        sample_nonref_unique_hashes = len(sample_nonref)
+        
+        self.logger.debug("\t-Size of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
+        if len(sample_nonref) == 0:
+            self.logger.warning("No non-reference k-mers found in the sample signature.")
+            return {}
+        
+        # intersect and report coverage and depth, then subtract from sample_nonref so sum will be 100%
+        for var_name in vars_order:
+            sample_nonref_var: SnipeSig = sample_nonref & vars[var_name]
+            sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
+            sample_nonref_var_unique_hashes = len(sample_nonref_var)
+            sample_nonref_var_coverage_index = sample_nonref_var_unique_hashes / sample_nonref_unique_hashes
+            self.vars_nonref_stats.update({
+                f"{var_name} non-genomic total k-mer abundance": sample_nonref_var_total_abundance,
+                f"{var_name} non-genomic coverage index": sample_nonref_var_coverage_index
+            })
+            
+            self.logger.debug("\t-Consuming non-reference k-mers from variable '%s'.", var_name)
+            sample_nonref -= sample_nonref_var
+            self.logger.debug("\t-Size of remaining non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
+            
+        self.vars_nonref_stats["non-var non-genomic total k-mer abundance"] = sample_nonref.total_abundance
+        self.vars_nonref_stats["non-var non-genomic coverage index"] = len(sample_nonref) / sample_nonref_unique_hashes if sample_nonref_unique_hashes > 0 else 0.0
+        
+        self.logger.debug(
+            "After consuming all vars from the non reference k-mers, the size of the sample signature is: %d hashes, "
+            "with total abundance of %s.", 
+            len(sample_nonref), sample_nonref.total_abundance
+        )
+        
+        return self.vars_nonref_stats
+    
+    def load_genome_sig_to_dict(self, *, zip_file_path: str, **kwargs) -> Dict[str, 'SnipeSig']:
+        """
+        Load a genome signature into a dictionary of SnipeSig instances.
+        
+        Parameters:
+            zip_file_path (str): Path to the zip file containing the genome signatures.
+            **kwargs: Additional keyword arguments to pass to the SnipeSig constructor.
+            
+        Returns:
+            Dict[str, SnipeSig]: A dictionary mapping genome names to SnipeSig instances.
+        """
+        
+        genome_chr_name_to_sig = {}
+        
+        sourmash_sigs: List[sourmash.signature.SourmashSignature] = sourmash.load_file_as_signatures(zip_file_path)
+        sex_count = 0
+        autosome_count = 0
+        genome_count = 0
+        for sig in sourmash_sigs:
+            name = sig.name
+            if name.endswith("-snipegenome"):
+                self.logger.debug(f"Loading genome signature: {name}")
+                restored_name = name.replace("-snipegenome", "")
+                genome_chr_name_to_sig[restored_name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.GENOME)
+                genome_count += 1
+            elif "sex" in name:
+                sex_count += 1
+                genome_chr_name_to_sig[name.replace('sex-','')] = SnipeSig(sourmash_sig=sig, sig_type=SigType.GENOME)
+            elif "autosome" in name:
+                autosome_count += 1
+                genome_chr_name_to_sig[name.replace('autosome-','')] = SnipeSig(sourmash_sig=sig, sig_type=SigType.GENOME)
+            else:
+                logging.warning(f"Unknown genome signature name: {name}, are you sure you generated this with `snipe sketch --ref`?")
+                
+        self.logger.debug("Loaded %d genome signatures and %d sex chrs and %d autosome chrs", genome_count, sex_count, autosome_count)
+                
+        if genome_count != 1:
+            logging.error(f"Expected 1 genome signature, found {genome_count}")
+        
+            
+        return genome_chr_name_to_sig
+
+
+class PreparedQC(ReferenceQC):
+    r"""
+    Class for quality control (QC) analysis of sample signature against prepared snipe profiles.
+    """
+
+    def __init__(self, *, sample_sig: SnipeSig, snipe_db_path: str = '~/.snipe/dbs/', ref_id: Optional[str] = None, amplicon_id: Optional[str] = None, enable_logging: bool = False, **kwargs):
+        """
+        Initialize the PreparedQC instance.
+
+        **Parameters**
+
+        - `sample_sig` (`SnipeSig`): The sample k-mer signature.
+        - `snipe_db_path` (`str`): Path to the local Snipe database directory.
+        - `ref_id` (`Optional[str]`): Reference identifier for selecting specific profiles.
+        - `enable_logging` (`bool`): Flag to enable detailed logging.
+        - `**kwargs`: Additional keyword arguments.
+        """
+        self.snipe_db_path = os.path.expanduser(snipe_db_path)
+        self.ref_id = ref_id
+
+        # Ensure the local database directory exists
+        os.makedirs(self.snipe_db_path, exist_ok=True)
+        if enable_logging:
+            self.logger.debug(f"Local Snipe DB path set to: {self.snipe_db_path}")
+        else:
+            self.logger.debug("Logging is disabled for PreparedQC.")
+
+        # Initialize without a reference signature for now; it can be set after downloading
+        super().__init__(
+            sample_sig=sample_sig,
+            reference_sig=None,  # To be set after downloading
+            enable_logging=enable_logging,
+            **kwargs
+        )
+
+    def download_osf_db(self, url: str, save_path: str = '~/.snipe/dbs', force: bool = False) -> Optional[str]:
+        """
+        Download a file from OSF using the provided URL. The file is saved with its original name 
+        as specified by the OSF server via the Content-Disposition header.
+
+        **Parameters**
+
+        - `url` (`str`): The OSF URL to download the file from.
+        - `save_path` (`str`): The directory path where the file will be saved. Supports user (~) and environment variables.
+                               Default is the local Snipe database directory.
+        - `force` (`bool`): If True, overwrite the file if it already exists. Default is False.
+
+        **Returns**
+
+        - `Optional[str]`: The path to the downloaded file if successful, else None.
+
+        **Raises**
+
+        - `requests.exceptions.RequestException`: If an error occurs during the HTTP request.
+        - `Exception`: For any other exceptions that may arise.
+        """
+        try:
+            # Expand user (~) and environment variables in save_path
+            expanded_save_path = os.path.expanduser(os.path.expandvars(save_path))
+            self.logger.debug(f"Expanded save path: {expanded_save_path}")
+
+            # Ensure the download URL ends with '/download'
+            parsed_url = urlparse(url)
+            if not parsed_url.path.endswith('/download'):
+                download_url = f"{url.rstrip('/')}/download"
+            else:
+                download_url = url
+
+            self.logger.debug(f"Download URL: {download_url}")
+
+            # Ensure the save directory exists
+            os.makedirs(expanded_save_path, exist_ok=True)
+            self.logger.debug(f"Save path verified/created: {expanded_save_path}")
+
+            # Initiate the GET request with streaming
+            with requests.get(download_url, stream=True, allow_redirects=True) as response:
+                response.raise_for_status()  # Raise an exception for HTTP errors
+
+                # Attempt to extract filename from Content-Disposition
+                content_disposition = response.headers.get('Content-Disposition')
+                filename = self._extract_filename(content_disposition, parsed_url.path)
+                self.logger.debug(f"Filename determined: {filename}")
+
+                # Define the full save path
+                full_save_path = os.path.join(expanded_save_path, filename)
+                self.logger.debug(f"Full save path: {full_save_path}")
+
+                # Check if the file already exists
+                if os.path.exists(full_save_path):
+                    if force:
+                        self.logger.info(f"Overwriting existing file: {full_save_path}")
+                    else:
+                        self.logger.info(f"File already exists: {full_save_path}. Skipping download.")
+                        return full_save_path
+
+                # Get the total file size for the progress bar
+                total_size = int(response.headers.get('Content-Length', 0))
+
+                # Initialize the progress bar
+                with open(full_save_path, 'wb') as file, tqdm(
+                    total=total_size, 
+                    unit='B', 
+                    unit_scale=True, 
+                    unit_divisor=1024,
+                    desc=filename,
+                    ncols=100
+                ) as bar:
+                    for chunk in response.iter_content(chunk_size=1024):
+                        if chunk:  # Filter out keep-alive chunks
+                            file.write(chunk)
+                            bar.update(len(chunk))
+
+                self.logger.info(f"File downloaded successfully: {full_save_path}")
+                return full_save_path
+
+        except requests.exceptions.RequestException as req_err:
+            self.logger.error(f"Request error occurred while downloading {url}: {req_err}")
+            raise
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred while downloading {url}: {e}")
+            raise
+
+    def _extract_filename(self, content_disposition: Optional[str], url_path: str) -> str:
+        """
+        Extract filename from Content-Disposition header or fallback to URL path.
+
+        **Parameters**
+
+        - `content_disposition` (`Optional[str]`): The Content-Disposition header value.
+        - `url_path` (`str`): The path component of the URL.
+
+        **Returns**
+
+        - `str`: The extracted filename.
+        """
+        filename = None
+        if content_disposition:
+            self.logger.debug("Parsing Content-Disposition header for filename.")
+            parts = content_disposition.split(';')
+            for part in parts:
+                part = part.strip()
+                if part.lower().startswith('filename*='):
+                    # Handle RFC 5987 encoding (e.g., filename*=UTF-8''example.txt)
+                    encoded_filename = part.split('=', 1)[1].strip()
+                    if "''" in encoded_filename:
+                        filename = encoded_filename.split("''", 1)[1]
+                    else:
+                        filename = encoded_filename
+                    self.logger.debug(f"Filename extracted from headers (RFC 5987): {filename}")
+                    break
+                elif part.lower().startswith('filename='):
+                    # Remove 'filename=' and any surrounding quotes
+                    filename = part.split('=', 1)[1].strip(' "')
+                    self.logger.debug(f"Filename extracted from headers: {filename}")
+                    break
+
+        if not filename:
+            self.logger.debug("Falling back to filename derived from URL path.")
+            filename = os.path.basename(url_path)
+            if not filename:
+                filename = 'downloaded_file'
+            self.logger.debug(f"Filename derived from URL: {filename}")
+
+        return filename
+    
+    

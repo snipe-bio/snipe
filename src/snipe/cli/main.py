@@ -2,54 +2,35 @@ import os
 import sys
 import time
 import logging
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict, Set
 
 import click
+import pandas as pd
+from tqdm import tqdm
+import concurrent.futures
 
 from snipe.api.enums import SigType
 from snipe.api.sketch import SnipeSketch
+from snipe.api.snipe_sig import SnipeSig
+from snipe.api.reference_QC import ReferenceQC
 
+# pylint: disable=logging-fstring-interpolation
 
 def validate_zip_file(ctx, param, value: str) -> str:
     """
     Validate that the output file has a .zip extension.
-
-    Args:
-        ctx: Click context.
-        param: Click parameter.
-        value (str): The value of the parameter.
-
-    Raises:
-        click.BadParameter: If the file does not have a .zip extension.
-
-    Returns:
-        str: The validated file path.
     """
     if not value.lower().endswith('.zip'):
         raise click.BadParameter('Output file must have a .zip extension.')
     return value
 
 
-def ensure_mutually_exclusive(ctx, param, value: Any) -> Any:
+def validate_tsv_file(ctx, param, value: str) -> str:
     """
-    Ensure that only one of --sample, --ref, or --amplicon is provided.
-
-    Args:
-        ctx: Click context.
-        param: Click parameter.
-        value (Any): The value of the parameter.
-
-    Raises:
-        click.UsageError: If more than one or none of the mutually exclusive options are provided.
-
-    Returns:
-        Any: The validated value.
+    Validate that the output file has a .tsv extension.
     """
-    sample, ref, amplicon = ctx.params.get('sample'), ctx.params.get('ref'), ctx.params.get('amplicon')
-    if sum([bool(sample), bool(ref), bool(amplicon)]) > 1:
-        raise click.UsageError('Only one of --sample, --ref, or --amplicon can be used at a time.')
-    if not any([bool(sample), bool(ref), bool(amplicon)]):
-        raise click.UsageError('You must specify one of --sample, --ref, or --amplicon.')
+    if not value.lower().endswith('.tsv'):
+        raise click.BadParameter('Output file must have a .tsv extension.')
     return value
 
 
@@ -58,7 +39,7 @@ def cli():
     """
     Snipe CLI Tool
 
-    Use this tool to perform various sketching operations on genomic data.
+    Use this tool to perform various sketching and quality control operations on genomic data.
     """
     pass
 
@@ -67,7 +48,7 @@ def cli():
 @click.option('-s', '--sample', type=click.Path(exists=True), help='Sample FASTA file.')
 @click.option('-r', '--ref', type=click.Path(exists=True), help='Reference genome FASTA file.')
 @click.option('-a', '--amplicon', type=click.Path(exists=True), help='Amplicon FASTA file.')
-@click.option('--ychr', type=click.Path(exists=True), help='Y chromosome signature file (required for --ref and --amplicon).')
+@click.option('--ychr', type=click.Path(exists=True), help='Y chromosome FASTA file (overrides the reference ychr).')
 @click.option('-n', '--name', required=True, help='Signature name.')
 @click.option('-o', '--output-file', required=True, callback=validate_zip_file, help='Output file with .zip extension.')
 @click.option('-b', '--batch-size', default=100000, type=int, show_default=True, help='Batch size for sample sketching.')
@@ -86,7 +67,11 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
     You must specify exactly one of --sample, --ref, or --amplicon.
     """
     # Ensure mutual exclusivity
-    ensure_mutually_exclusive(ctx, None, None)
+    samples = [sample, ref, amplicon]
+    provided = [s for s in samples if s]
+    if len(provided) != 1:
+        click.echo('Error: Exactly one of --sample, --ref, or --amplicon must be provided.')
+        sys.exit(1)
 
     # Handle existing output file
     if os.path.exists(output_file):
@@ -179,8 +164,8 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
                 chr_to_sig[snipe_ychr_name] = y_chr_sig
 
             # Log the detected chromosomes
-            autosomal = [name for name in chr_to_sig.keys() if "autosome" in name]
-            sex = [name for name in chr_to_sig.keys() if "sex" in name]
+            autosomal = [name for name in chr_to_sig.keys() if "autosome" in name.lower()]
+            sex = [name for name in chr_to_sig.keys() if "sex" in name.lower()]
 
             click.echo("Autodetected chromosomes:")
             for i, chr_name in enumerate(chr_to_sig.keys(), 1):
@@ -223,26 +208,275 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
     click.echo(f"Sketching completed in {elapsed_time:.2f} seconds.")
 
 
-# Add sketch command to cli
-cli.add_command(sketch)
+# Define the top-level process_sample function
+def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str],
+                  advanced: bool, roi: bool, debug: bool,
+                  ychr: Optional[str] = None,
+                  vars_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Process a single sample for QC.
+
+    Parameters:
+    - sample_path (str): Path to the sample signature file.
+    - ref_path (str): Path to the reference signature file.
+    - amplicon_path (Optional[str]): Path to the amplicon signature file.
+    - advanced (bool): Flag to include advanced metrics.
+    - roi (bool): Flag to calculate ROI.
+    - debug (bool): Flag to enable debugging.
+    - vars_paths (Optional[List[str]]): List of variable signature file paths.
+
+    Returns:
+    - Dict[str, Any]: QC results for the sample.
+    """
+    # Configure worker-specific logging
+    logger = logging.getLogger(f'snipe_qc_worker_{os.path.basename(sample_path)}')
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    if not logger.hasHandlers():
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    sample_name = os.path.splitext(os.path.basename(sample_path))[0]
+    try:
+        # Load sample signature
+        sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+        logger.debug(f"Loaded sample signature: {sample_sig.name}")
+
+        # Load reference signature
+        reference_sig = SnipeSig(sourmash_sig=ref_path, sig_type=SigType.GENOME, enable_logging=debug)
+        logger.debug(f"Loaded reference signature: {reference_sig.name}")
+
+        # Load amplicon signature if provided
+        amplicon_sig = None
+        if amplicon_path:
+            amplicon_sig = SnipeSig(sourmash_sig=amplicon_path, sig_type=SigType.AMPLICON, enable_logging=debug)
+            logger.debug(f"Loaded amplicon signature: {amplicon_sig.name}")
+
+        # Instantiate ReferenceQC
+        qc_instance = ReferenceQC(
+            sample_sig=sample_sig,
+            reference_sig=reference_sig,
+            amplicon_sig=amplicon_sig,
+            enable_logging=debug
+        )
+        
+        # Load variable signatures if provided
+        if vars_paths:
+            qc_instance.logger.debug(f"Loading {len(vars_paths)} variable signature(s).")
+            vars_dict: Dict[str, SnipeSig] = {}
+            vars_order: List[str] = []
+            for path in vars_paths:
+                qc_instance.logger.debug(f"Loading variable signature from: {path}")
+                var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
+                var_name = var_sig.name if var_sig.name else os.path.basename(path)
+                qc_instance.logger.debug(f"Loaded variable signature: {var_name}")
+                vars_dict[var_name] = var_sig
+                vars_order.append(var_name)
+                logger.debug(f"Loaded variable signature '{var_name}': {var_sig.name}")
+            # Pass variables to ReferenceQC
+            qc_instance.nonref_consume_from_vars(vars=vars_dict, vars_order=vars_order)
+        # No else block needed; variables are optional
+
+        # Calculate chromosome metrics
+        # genome_chr_to_sig: Dict[str, SnipeSig] = qc_instance.load_genome_sig_to_dict(zip_file_path = ref_path)
+        chr_to_sig = reference_sig.chr_to_sig.copy()
+        if ychr:
+            ychr_sig = SnipeSig(sourmash_sig=ychr, sig_type=SigType.GENOME, enable_logging=debug)
+            chr_to_sig['y'] = ychr_sig
+        
+        qc_instance.calculate_chromosome_metrics(chr_to_sig)
+
+        # Get aggregated stats
+        aggregated_stats = qc_instance.get_aggregated_stats(include_advanced=advanced)
+
+        # Initialize result dict
+        result = {
+            "sample": sample_name,
+            "file_path": os.path.abspath(sample_path),
+        }
+        # Add aggregated stats
+        result.update(aggregated_stats)
+
+        # Calculate ROI if requested
+        if roi:
+            logger.debug(f"Calculating ROI for sample: {sample_name}")
+            for fold in [1, 2, 5, 9]:
+                try:
+                    predicted_coverage = qc_instance.predict_coverage(extra_fold=fold)
+                    result[f"Predicted_Coverage_Fold_{fold}x"] = predicted_coverage
+                    logger.debug(f"Fold {fold}x: Predicted Coverage = {predicted_coverage}")
+                except RuntimeError as e:
+                    logger.error(f"ROI calculation failed for sample {sample_name} at fold {fold}x: {e}")
+                    result[f"Predicted_Coverage_Fold_{fold}x"] = None
+
+        return result
+
+    except Exception as e:
+        logger.error(f"QC failed for sample {sample_path}: {e}")
+        return {
+            "sample": sample_name,
+            "file_path": os.path.abspath(sample_path),
+            "QC_Error": str(e)
+        }
 
 
-# Example placeholder for future 'qc' command
-@cli.group()
-def qc():
+@cli.command()
+@click.option('--ref', type=click.Path(exists=True), required=True, help='Reference genome signature file (required).')
+@click.option('--sample', type=click.Path(exists=True), multiple=True, help='Sample signature file. Can be provided multiple times.')
+@click.option('--samples-from-file', type=click.Path(exists=True), help='File containing sample paths (one per line).')
+@click.option('--amplicon', type=click.Path(exists=True), help='Amplicon signature file (optional).')
+@click.option('--roi', is_flag=True, default=False, help='Calculate ROI for 1,2,5,9 folds.')
+@click.option('--cores', '-c', default=4, type=int, show_default=True, help='Number of CPU cores to use for parallel processing.')
+@click.option('--advanced', is_flag=True, default=False, help='Include advanced QC metrics.')
+@click.option('--ychr', type=click.Path(exists=True), help='Y chromosome signature file (overrides the reference ychr).')
+@click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
+@click.option('-o', '--output', required=True, callback=validate_tsv_file, help='Output TSV file for QC results.')
+@click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Variable signature file path. Can be used multiple times.')
+def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
+       amplicon: Optional[str], roi: bool, cores: int, advanced: bool, 
+       ychr: Optional[str], debug: bool, output: str, vars: List[str]):
     """
-    Perform quality control operations.
-    """
-    pass
+    Perform quality control (QC) on multiple samples against a reference genome.
 
+    This command calculates various QC metrics for each provided sample, optionally including advanced metrics
+    and ROI predictions. Results are aggregated and exported to a TSV file.
+    """
+    start_time = time.time()
 
-@qc.command()
-def run_qc():
-    """
-    Run quality control checks.
-    """
-    click.echo('Quality control functionality is not yet implemented.')
-    # Future implementation goes here
+    # Configure logging
+    logger = logging.getLogger('snipe_qc')
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    if not logger.hasHandlers():
+        logger.addHandler(handler)
+
+    logger.info("Starting QC process.")
+
+    # Collect sample paths from --sample and --samples-from-file
+    samples_set: Set[str] = set(sample)  # Start with samples provided via --sample
+
+    if samples_from_file:
+        logger.debug(f"Reading samples from file: {samples_from_file}")
+        try:
+            with open(samples_from_file, encoding='utf-8') as f:
+                file_samples = {line.strip() for line in f if line.strip()}
+            samples_set.update(file_samples)
+            logger.debug(f"Collected {len(file_samples)} samples from file.")
+        except Exception as e:
+            logger.error(f"Failed to read samples from file {samples_from_file}: {e}")
+            sys.exit(1)
+
+    # Deduplicate and validate sample paths
+    valid_samples = []
+    for sample_path in samples_set:
+        if os.path.exists(sample_path):
+            valid_samples.append(os.path.abspath(sample_path))
+        else:
+            logger.warning(f"Sample file does not exist and will be skipped: {sample_path}")
+
+    if not valid_samples:
+        logger.error("No valid samples provided for QC.")
+        sys.exit(1)
+
+    logger.info(f"Total valid samples to process: {len(valid_samples)}")
+
+    # Load reference signature
+    logger.info(f"Loading reference signature from: {ref}")
+    try:
+        reference_sig = SnipeSig(sourmash_sig=ref, sig_type=SigType.GENOME, enable_logging=debug)
+        logger.debug(f"Loaded reference signature: {reference_sig.name}")
+    except Exception as e:
+        logger.error(f"Failed to load reference signature from {ref}: {e}")
+        sys.exit(1)
+
+    # Load amplicon signature if provided
+    amplicon_sig = None
+    if amplicon:
+        logger.info(f"Loading amplicon signature from: {amplicon}")
+        try:
+            amplicon_sig = SnipeSig(sourmash_sig=amplicon, sig_type=SigType.AMPLICON, enable_logging=debug)
+            logger.debug(f"Loaded amplicon signature: {amplicon_sig.name}")
+        except Exception as e:
+            logger.error(f"Failed to load amplicon signature from {amplicon}: {e}")
+            sys.exit(1)
+
+    # Prepare variable signatures if provided
+    vars_paths = []
+    if vars:
+        logger.info(f"Loading {len(vars)} variable signature(s).")
+        for path in vars:
+            if not os.path.exists(path):
+                logger.error(f"Variable signature file does not exist: {path}")
+                sys.exit(1)
+            vars_paths.append(os.path.abspath(path))
+        logger.debug(f"Variable signature paths: {vars_paths}")
+
+    # Prepare arguments for process_sample function    
+    dict_process_args = []
+    for sample_path in valid_samples:
+        dict_process_args.append({
+            "sample_path": sample_path,
+            "ref_path": ref,
+            "amplicon_path": amplicon,
+            "advanced": advanced,
+            "roi": roi,
+            "debug": debug,
+            "ychr": ychr,
+            "vars_paths": vars_paths
+        })
+    
+    
+    # Process samples in parallel with progress bar
+    results = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
+        # Submit all tasks
+        futures = {
+            executor.submit(process_sample, **args): args for args in dict_process_args
+        }
+        # Iterate over completed futures with a progress bar
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
+            sample = futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as exc:
+                logger.error(f"Sample {sample} generated an exception: {exc}")
+                results.append({
+                    "sample": os.path.splitext(os.path.basename(sample))[0],
+                    "file_path": sample,
+                    "QC_Error": str(exc)
+                })
+
+    # Create pandas DataFrame
+    logger.info("Aggregating results into DataFrame.")
+    df = pd.DataFrame(results)
+
+    # Reorder columns to have 'sample' and 'file_path' first, if they exist
+    cols = list(df.columns)
+    reordered_cols = []
+    for col in ['sample', 'file_path']:
+        if col in cols:
+            reordered_cols.append(col)
+            cols.remove(col)
+    reordered_cols += cols
+    df = df[reordered_cols]
+
+    # Export to TSV
+    try:
+        df.to_csv(output, sep='\t', index=False)
+        logger.info(f"QC results successfully exported to {output}")
+    except Exception as e:
+        logger.error(f"Failed to export QC results to {output}: {e}")
+        sys.exit(1)
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f"QC process completed in {elapsed_time:.2f} seconds.")
 
 
 if __name__ == '__main__':

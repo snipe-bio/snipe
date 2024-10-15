@@ -8,17 +8,16 @@ import sys
 import threading
 import queue
 from typing import Any, Dict, List, Optional, Tuple
-
-from pyfastx import Fastx as SequenceReader
+from pyfastx import Fastx as SequenceReader # pylint: disable=no-name-in-module
 import sourmash
 from pathos.multiprocessing import ProcessingPool as Pool
 from snipe.api.enums import SigType
-from snipe.api import SnipeSig
+from snipe.api.snipe_sig import SnipeSig
 
 
 class SnipeSketch:
     """
-    SnipeSketch is responsible for creating MinHash sketches from genomic data.
+    SnipeSketch is responsible for creating FracMinHash sketches from genomic data.
     It supports parallel processing, progress monitoring, and different sketching modes
     including sample, genome, and amplicon sketching.
     """
@@ -69,7 +68,7 @@ class SnipeSketch:
         scaled: int = 10_000,
     ) -> sourmash.MinHash:
         """
-        Process a subset of sequences to create a MinHash sketch.
+        Process a subset of sequences to create a FracMinHash sketch.
 
         Each process creates its own MinHash instance and processes sequences
         assigned based on the thread ID. Progress is reported via a shared queue.
@@ -84,7 +83,7 @@ class SnipeSketch:
             scaled (int, optional): Scaling factor for MinHash. Defaults to 10_000.
 
         Returns:
-            sourmash.MinHash: The resulting MinHash sketch.
+            sourmash.MinHash: The resulting FracMinHash sketch.
         """
         self._register_signal_handler()
         try:
@@ -180,7 +179,7 @@ class SnipeSketch:
         **kwargs: Any,
     ) -> sourmash.SourmashSignature:
         """
-        Create a MinHash sketch for a sample using parallel processing.
+        Create a FracMinHash sketch for a sample using parallel processing.
 
         Args:
             sample_name (str): Name of the sample.
@@ -465,7 +464,7 @@ class SnipeSketch:
         amplicon_name: str = "amplicon",
     ) -> sourmash.SourmashSignature:
         """
-        Create a MinHash sketch for an amplicon.
+        Create a FracMinHash sketch for an amplicon.
 
         Args:
             fasta_file (str): Path to the FASTA file.

@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import sourmash
 
-from snipe.api import SnipeSig
+from snipe.api.snipe_sig import SnipeSig
 from snipe.api.enums import SigType
 
 def sample_signature_json():

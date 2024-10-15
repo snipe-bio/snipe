@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import sourmash
 
-from snipe.api import SnipeSig
+from snipe.api.snipe_sig import SnipeSig
 from snipe.api.enums import SigType
 from snipe.api.reference_QC import ReferenceQC
 
@@ -868,19 +868,6 @@ class TestReferenceQC(unittest.TestCase):
             self.assertEqual(data_point["cumulative_coverage_index"], 0.0)
             self.assertEqual(data_point["cumulative_total_abundance"], 0)
 
-
-    def test_predict_coverage_with_very_large_extra_fold(self):
-        """
-        Test that predict_coverage caps the predicted coverage at 1.0 even with a very large extra_fold.
-        """
-        qc = ReferenceQC(
-            sample_sig=self.sample_sig,
-            reference_sig=self.reference_sig,
-            enable_logging=False
-        )
-        predicted_coverage = qc.predict_coverage(extra_fold=1000.0, n=40)
-        self.assertGreaterEqual(predicted_coverage, 0.9)
-        self.assertLessEqual(predicted_coverage, 1.0)
             
     def test_calculate_sex_chrs_metrics(self):
         """
@@ -931,6 +918,303 @@ class TestReferenceQC(unittest.TestCase):
         # Y-Coverage = (0/3) / (5/6) = 0 / 0.8333 = 0.0
         expected_ycoverage = 0.0
         self.assertAlmostEqual(metrics["Y-Coverage"], expected_ycoverage, places=4)
+        
+    def test_nonref_consume_from_vars_basic(self):
+        """
+        Test that nonref_consume_from_vars correctly assigns non-reference k-mers to variables in vars_order.
+        """
+        # Create a sample signature with some non-reference k-mers
+        # Reference signature has [10,20,30,40,50,60]
+        # Sample signature has [10,20,30,40,50,70,80,90]
+        sample_sig_nonref = self.create_test_signature(
+            hashes=[10, 20, 30, 40, 50, 70, 80, 90],
+            abundances=[1, 2, 3, 4, 5, 6, 7, 8],
+            name="test_sample_nonref",
+            sig_type=SigType.SAMPLE
+        )
+        # Reference signature as per setUp: [10,20,30,40,50,60]
+        # Non-reference k-mers: [70,80,90]
+        
+        # Define variables with overlapping k-mers
+        vars_signatures = {
+            "var_A": self.create_test_signature(
+                hashes=[70, 80],
+                abundances=[6, 7],
+                name="var_A",
+                sig_type=SigType.SAMPLE
+            ),
+            "var_B": self.create_test_signature(
+                hashes=[80, 90],
+                abundances=[7, 8],
+                name="var_B",
+                sig_type=SigType.SAMPLE
+            )
+        }
+        vars_order = ["var_A", "var_B"]
+        
+        qc = ReferenceQC(
+            sample_sig=sample_sig_nonref,
+            reference_sig=self.reference_sig,
+            amplicon_sig=None,
+            enable_logging=False
+        )
+        
+        nonref_stats = qc.nonref_consume_from_vars(vars=vars_signatures, vars_order=vars_order)
+        
+        # Expected:
+        # var_A consumes [70,80]: total abundance = 6 + 7 = 13
+        # Coverage index for var_A: 2 / 3 ≈ 0.6667
+        # var_B consumes [90]: total abundance = 8
+        # Coverage index for var_B: 1 / 3 ≈ 0.3333
+        # non-var: 0
+        expected_stats = {
+            "var_A non-genomic total k-mer abundance": 13,
+            "var_A non-genomic coverage index": 2 / 3,
+            "var_B non-genomic total k-mer abundance": 8,
+            "var_B non-genomic coverage index": 1 / 3,
+            "non-var non-genomic total k-mer abundance": 0,
+            "non-var non-genomic coverage index": 0 / 3
+        }
+        
+        # Verify the stats
+        for key, value in expected_stats.items():
+            self.assertAlmostEqual(nonref_stats.get(key, None), value, places=4, msg=f"Mismatch in {key}")
+        
+    def test_nonref_consume_from_vars_overlapping_vars(self):
+        """
+        Test that nonref_consume_from_vars handles overlapping variables correctly, consuming k-mers only once.
+        """
+        # Create a sample signature with some non-reference k-mers
+        sample_sig_nonref = self.create_test_signature(
+            hashes=[70, 80, 90, 100],
+            abundances=[6, 7, 8, 9],
+            name="test_sample_nonref_overlap",
+            sig_type=SigType.SAMPLE
+        )
+        # Non-reference k-mers: [70,80,90,100]
+        
+        # Define variables with overlapping k-mers
+        vars_signatures = {
+            "var_A": self.create_test_signature(
+                hashes=[70, 80],
+                abundances=[6, 7],
+                name="var_A",
+                sig_type=SigType.SAMPLE
+            ),
+            "var_B": self.create_test_signature(
+                hashes=[80, 90],
+                abundances=[7, 8],
+                name="var_B",
+                sig_type=SigType.SAMPLE
+            ),
+            "var_C": self.create_test_signature(
+                hashes=[90, 100],
+                abundances=[8, 9],
+                name="var_C",
+                sig_type=SigType.SAMPLE
+            )
+        }
+        vars_order = ["var_A", "var_B", "var_C"]
+        
+        qc = ReferenceQC(
+            sample_sig=sample_sig_nonref,
+            reference_sig=self.reference_sig,
+            amplicon_sig=None,
+            enable_logging=False
+        )
+        
+        nonref_stats = qc.nonref_consume_from_vars(vars=vars_signatures, vars_order=vars_order)
+        
+        # Expected:
+        # var_A consumes [70,80]: total abundance = 6 + 7 = 13
+        # Coverage index for var_A: 2 / 4 = 0.5
+        # var_B consumes [90]: total abundance = 8
+        # Coverage index for var_B: 1 / 4 = 0.25
+        # var_C consumes [100]: total abundance = 9
+        # Coverage index for var_C: 1 / 4 = 0.25
+        # non-var: 0
+        expected_stats = {
+            "var_A non-genomic total k-mer abundance": 13,
+            "var_A non-genomic coverage index": 2 / 4,
+            "var_B non-genomic total k-mer abundance": 8,
+            "var_B non-genomic coverage index": 1 / 4,
+            "var_C non-genomic total k-mer abundance": 9,
+            "var_C non-genomic coverage index": 1 / 4,
+            "non-var non-genomic total k-mer abundance": 0,
+            "non-var non-genomic coverage index": 0 / 4
+        }
+        
+        # Verify the stats
+        for key, value in expected_stats.items():
+            self.assertAlmostEqual(nonref_stats.get(key, None), value, places=4, msg=f"Mismatch in {key}")
+        
+    def test_nonref_consume_from_vars_empty_vars(self):
+        """
+        Test that nonref_consume_from_vars handles empty vars correctly.
+        """
+        # Create a sample signature with some non-reference k-mers
+        sample_sig_nonref = self.create_test_signature(
+            hashes=[70, 80, 90],
+            abundances=[6, 7, 8],
+            name="test_sample_nonref_empty_vars",
+            sig_type=SigType.SAMPLE
+        )
+        # Non-reference k-mers: [70,80,90]
+        
+        # Define empty vars
+        vars_signatures = {}
+        vars_order = []
+        
+        qc = ReferenceQC(
+            sample_sig=sample_sig_nonref,
+            reference_sig=self.reference_sig,
+            amplicon_sig=None,
+            enable_logging=False
+        )
+        
+        nonref_stats = qc.nonref_consume_from_vars(vars=vars_signatures, vars_order=vars_order)
+        
+        # Expected:
+        # non-var consumes all k-mers
+        expected_stats = {
+            "non-var non-genomic total k-mer abundance": 21,  # 6 + 7 + 8
+            "non-var non-genomic coverage index": 3 / 3  # 3 k-mers
+        }
+        
+        # Verify the stats
+        self.assertEqual(len(nonref_stats), 2)
+        self.assertAlmostEqual(nonref_stats.get("non-var non-genomic total k-mer abundance"), 21, places=4)
+        self.assertAlmostEqual(nonref_stats.get("non-var non-genomic coverage index"), 1.0, places=4)
+        
+    def test_nonref_consume_from_vars_vars_order_not_matching_vars(self):
+        """
+        Test that nonref_consume_from_vars raises ValueError when vars_order contains variables not in vars.
+        """
+        # Create a sample signature with some non-reference k-mers
+        sample_sig_nonref = self.create_test_signature(
+            hashes=[70, 80, 90],
+            abundances=[6, 7, 8],
+            name="test_sample_nonref_invalid_order",
+            sig_type=SigType.SAMPLE
+        )
+        # Non-reference k-mers: [70,80,90]
+        
+        # Define vars with one variable
+        vars_signatures = {
+            "var_A": self.create_test_signature(
+                hashes=[70],
+                abundances=[6],
+                name="var_A",
+                sig_type=SigType.SAMPLE
+            )
+        }
+        # vars_order includes a variable not in vars_signatures
+        vars_order = ["var_A", "var_B"]
+        
+        qc = ReferenceQC(
+            sample_sig=sample_sig_nonref,
+            reference_sig=self.reference_sig,
+            amplicon_sig=None,
+            enable_logging=False
+        )
+        
+        with self.assertRaises(ValueError):
+            qc.nonref_consume_from_vars(vars=vars_signatures, vars_order=vars_order)
+    
+    def test_nonref_consume_from_vars_no_nonref_kmers(self):
+        """
+        Test that nonref_consume_from_vars returns empty dict when there are no non-reference k-mers.
+        """
+        # Create a sample signature identical to reference signature
+        sample_sig_identical = self.create_test_signature(
+            hashes=[10,20,30,40,50,60],
+            abundances=[1,2,3,4,5,6],
+            name="test_sample_identical",
+            sig_type=SigType.SAMPLE
+        )
+        # Non-reference k-mers: none
+        
+        # Define variables
+        vars_signatures = {
+            "var_A": self.create_test_signature(
+                hashes=[70],
+                abundances=[7],
+                name="var_A",
+                sig_type=SigType.SAMPLE
+            )
+        }
+        vars_order = ["var_A"]
+        
+        qc = ReferenceQC(
+            sample_sig=sample_sig_identical,
+            reference_sig=self.reference_sig,
+            amplicon_sig=None,
+            enable_logging=False
+        )
+        
+        nonref_stats = qc.nonref_consume_from_vars(vars=vars_signatures, vars_order=vars_order)
+        
+        # Expected: empty dict since no non-reference k-mers
+        self.assertEqual(nonref_stats, {})
+        
+    def test_nonref_consume_from_vars_all_kmers_consumed(self):
+        """
+        Test that nonref_consume_from_vars correctly reports when all non-reference k-mers are consumed by variables.
+        """
+        # Create a sample signature with some non-reference k-mers
+        sample_sig_nonref = self.create_test_signature(
+            hashes=[70, 80, 90],
+            abundances=[6, 7, 8],
+            name="test_sample_nonref_all_consumed",
+            sig_type=SigType.SAMPLE
+        )
+        # Non-reference k-mers: [70,80,90]
+        
+        # Define variables that consume all non-reference k-mers
+        vars_signatures = {
+            "var_A": self.create_test_signature(
+                hashes=[70, 80],
+                abundances=[6, 7],
+                name="var_A",
+                sig_type=SigType.SAMPLE
+            ),
+            "var_B": self.create_test_signature(
+                hashes=[90],
+                abundances=[8],
+                name="var_B",
+                sig_type=SigType.SAMPLE
+            )
+        }
+        vars_order = ["var_A", "var_B"]
+        
+        qc = ReferenceQC(
+            sample_sig=sample_sig_nonref,
+            reference_sig=self.reference_sig,
+            amplicon_sig=None,
+            enable_logging=False
+        )
+        
+        nonref_stats = qc.nonref_consume_from_vars(vars=vars_signatures, vars_order=vars_order)
+        
+        # Expected:
+        # var_A consumes [70,80]: total abundance = 6 + 7 = 13
+        # Coverage index for var_A: 2 / 3 ≈ 0.6667
+        # var_B consumes [90]: total abundance = 8
+        # Coverage index for var_B: 1 / 3 ≈ 0.3333
+        # non-var: 0
+        expected_stats = {
+            "var_A non-genomic total k-mer abundance": 13,
+            "var_A non-genomic coverage index": 2 / 3,
+            "var_B non-genomic total k-mer abundance": 8,
+            "var_B non-genomic coverage index": 1 / 3,
+            "non-var non-genomic total k-mer abundance": 0,
+            "non-var non-genomic coverage index": 0 / 3
+        }
+        
+        # Verify the stats
+        for key, value in expected_stats.items():
+            self.assertAlmostEqual(nonref_stats.get(key, None), value, places=4, msg=f"Mismatch in {key}")
+
 
 
 

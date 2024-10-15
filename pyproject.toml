@@ -29,6 +29,10 @@ dependencies = [
     "numpy",
     "pyfastx",
     "pathos",
+    "pandas",
+    "tqdm",
+    "lzstring",
+    "rapidfuzz",
 ]
 
 [project.optional-dependencies]
