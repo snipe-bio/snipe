@@ -154,11 +154,11 @@ class SnipeSig:
         self._track_abundance = _sourmash_sig.minhash.track_abundance
         
         if self._name.endswith("-snipesample"):
-            self.logger.debug("Found a sample signature with the snipe suffix `-snipesample`. Restoring original name `%s`.", self._name)
             self._name = self._name.replace("-snipesample", "")
+            self.logger.debug("Found a sample signature with the snipe suffix `-snipesample`. Restoring original name `%s`.", self._name)
         elif self._name.endswith("-snipeamplicon"):
-            self.logger.debug("Found an amplicon signature with the snipe suffix `-snipeamplicon`. Restoring original name `%s`.", self._name)
             self._name = self._name.replace("-snipeamplicon", "")
+            self.logger.debug("Found an amplicon signature with the snipe suffix `-snipeamplicon`. Restoring original name `%s`.", self._name)
 
         # If the signature does not track abundance, assume abundance of 1 for all hashes
         if not self._track_abundance:

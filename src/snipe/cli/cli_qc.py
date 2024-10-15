@@ -428,7 +428,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     if samples_from_file:
         logger.debug(f"Reading samples from file: {samples_from_file}")
         try:
-            with open(samples_from_file, encoding='utf-8') as f:
+            with open(samples_from_file, 'r', encoding='utf-8') as f:
                 file_samples = {line.strip() for line in f if line.strip()}
             samples_set.update(file_samples)
             logger.debug(f"Collected {len(file_samples)} samples from file.")
@@ -494,8 +494,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             "ychr": ychr,
             "vars_paths": vars_paths
         })
-    
-    
+
     results = []
     
     # Define a handler for graceful shutdown
@@ -533,9 +532,20 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         logger.error(f"An unexpected error occurred: {e}")
         sys.exit(1)
 
-    # Create pandas DataFrame
-    logger.info("Aggregating results into DataFrame.")
-    df = pd.DataFrame(results)
+    # Separate successful and failed results
+    succeeded = [res for res in results if "QC_Error" not in res]
+    failed = [res for res in results if "QC_Error" in res]
+
+    # Handle complete failure
+    if len(succeeded) == 0:
+        logger.error("All samples failed during QC processing. Output TSV will not be generated.")
+        sys.exit(1)
+
+    # Prepare the command-line invocation for comments
+    command_invocation = ' '.join(sys.argv)
+
+    # Create pandas DataFrame for succeeded samples
+    df = pd.DataFrame(succeeded)
 
     # Reorder columns to have 'sample' and 'file_path' first, if they exist
     cols = list(df.columns)
@@ -547,13 +557,24 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     reordered_cols += cols
     df = df[reordered_cols]
 
-    # Export to TSV
+    # Export to TSV with comments
     try:
-        df.to_csv(output, sep='\t', index=False)
+        with open(output, 'w', encoding='utf-8') as f:
+            # Write comment with command invocation
+            f.write(f"# Command: {command_invocation}\n")
+            # Write the DataFrame to the file
+            df.to_csv(f, sep='\t', index=False)
         logger.info(f"QC results successfully exported to {output}")
     except Exception as e:
         logger.error(f"Failed to export QC results to {output}: {e}")
         sys.exit(1)
+
+    # Report failed samples if any
+    if failed:
+        failed_samples = [res['sample'] for res in failed]
+        logger.warning(f"The following {len(failed_samples)} sample(s) failed during QC processing:")
+        for sample in failed_samples:
+            logger.warning(f"- {sample}")
 
     end_time = time.time()
     elapsed_time = end_time - start_time
