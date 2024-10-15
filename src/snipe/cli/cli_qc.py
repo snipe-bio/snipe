@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import logging
-from typing import Optional, Any, List, Dict, Set
+from typing import Optional, Any, List, Dict, Set, Union
 
 import click
 import pandas as pd
@@ -14,13 +14,20 @@ from snipe.api.sketch import SnipeSketch
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.reference_QC import ReferenceQC
 
-import concurrent.futures
 import signal
+
+def validate_sig_input(ctx, param, value: tuple) -> str:
+    supported_extensions = ['.zip', '.sig']
+    for path in value:
+        if not os.path.exists(path):
+            raise click.BadParameter(f"File not found: {path}")
+        if not any(path.lower().endswith(ext) for ext in supported_extensions):
+            raise click.BadParameter(f"Unsupported file format: {path}, supported formats: {', '.join(supported_extensions)}")
 
 def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str],
                   advanced: bool, roi: bool, debug: bool,
                   ychr: Optional[str] = None,
-                  vars_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+                  vars_paths: Optional[Union[List[str], List[SnipeSig]]] = None) -> Dict[str, Any]:
     """
     Process a single sample for QC.
 
@@ -31,7 +38,7 @@ def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str]
     - advanced (bool): Flag to include advanced metrics.
     - roi (bool): Flag to calculate ROI.
     - debug (bool): Flag to enable debugging.
-    - vars_paths (Optional[List[str]]): List of variable signature file paths.
+    - vars_paths (Optional[Union[List[str], List[SnipeSig]]]): List of paths to variable signature files or SnipeSig objects.
 
     Returns:
     - Dict[str, Any]: QC results for the sample.
@@ -73,18 +80,32 @@ def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str]
         # Load variable signatures if provided
         if vars_paths:
             qc_instance.logger.debug(f"Loading {len(vars_paths)} variable signature(s).")
-            vars_dict: Dict[str, SnipeSig] = {}
+            vars_dict: Dict[str, SnipeSig] = {sig.name: sig for sig in vars_paths} if isinstance(vars_paths[0], SnipeSig) else {}
+            qc_instance.logger.debug(f"vars_dict: {vars_dict}")
+            qc_instance.logger.debug(f"vars_paths: {vars_paths}")
             vars_order: List[str] = []
-            for path in vars_paths:
-                qc_instance.logger.debug(f"Loading variable signature from: {path}")
-                var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
-                var_name = var_sig.name if var_sig.name else os.path.basename(path)
-                qc_instance.logger.debug(f"Loaded variable signature: {var_name}")
-                vars_dict[var_name] = var_sig
-                vars_order.append(var_name)
-                logger.debug(f"Loaded variable signature '{var_name}': {var_sig.name}")
-            # Pass variables to ReferenceQC
+            
+            if not vars_dict:
+                qc_instance.logger.debug("Loading variable signature(s) from file paths.")
+                for path in vars_paths:
+                    qc_instance.logger.debug(f"Loading variable signature from: {path}")
+                    var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
+                    var_name = var_sig.name if var_sig.name else os.path.basename(path)
+                    vars_order.append(var_name)
+                    vars_dict[var_name] = var_sig
+                
+            else:
+                qc_instance.logger.debug("Loading variable signature(s) from SnipeSig objects.")
+                for snipe_name in vars_dict.keys():
+                    vars_order.append(snipe_name)
+                    qc_instance.logger.debug(f"Loaded variable signature: {snipe_name}")
+                    
+            # log keys of vars_dict and vars_order
+            qc_instance.logger.debug(f"vars_dict keys: {vars_dict.keys()}")
+            qc_instance.logger.debug(f"vars_order: {vars_order}")
+            
             qc_instance.nonref_consume_from_vars(vars=vars_dict, vars_order=vars_order)
+            
         # No else block needed; variables are optional
 
         # Calculate chromosome metrics
@@ -137,7 +158,7 @@ def validate_tsv_file(ctx, param, value: str) -> str:
 
 @click.command()
 @click.option('--ref', type=click.Path(exists=True), required=True, help='Reference genome signature file (required).')
-@click.option('--sample', type=click.Path(exists=True), multiple=True, help='Sample signature file. Can be provided multiple times.')
+@click.option('--sample', type=click.Path(exists=True), callback=validate_sig_input, multiple=True, help='Sample signature file. Can be provided multiple times.')
 @click.option('--samples-from-file', type=click.Path(exists=True), help='File containing sample paths (one per line).')
 @click.option('--amplicon', type=click.Path(exists=True), help='Amplicon signature file (optional).')
 @click.option('--roi', is_flag=True, default=False, help='Calculate ROI for 1,2,5,9 folds.')
@@ -423,7 +444,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     logger.info("Starting QC process.")
 
     # Collect sample paths from --sample and --samples-from-file
-    samples_set: Set[str] = set(sample)  # Start with samples provided via --sample
+    samples_set: Set[str] = set()
+    if sample:
+        samples_set.update(sample)
 
     if samples_from_file:
         logger.debug(f"Reading samples from file: {samples_from_file}")
@@ -472,6 +495,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
 
     # Prepare variable signatures if provided
     vars_paths = []
+    vars_snipesigs = []
     if vars:
         logger.info(f"Loading {len(vars)} variable signature(s).")
         for path in vars:
@@ -479,6 +503,13 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                 logger.error(f"Variable signature file does not exist: {path}")
                 sys.exit(1)
             vars_paths.append(os.path.abspath(path))
+            try:
+                var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
+                vars_snipesigs.append(var_sig)
+                logger.debug(f"Loaded variable signature: {var_sig.name}")
+            except Exception as e:
+                logger.error(f"Failed to load variable signature from {path}: {e}")
+                
         logger.debug(f"Variable signature paths: {vars_paths}")
 
     # Prepare arguments for process_sample function    
@@ -492,7 +523,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             "roi": roi,
             "debug": debug,
             "ychr": ychr,
-            "vars_paths": vars_paths
+            "vars_paths": vars_snipesigs #vars_paths
         })
 
     results = []
@@ -500,7 +531,10 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     # Define a handler for graceful shutdown
     def shutdown(signum, frame):
         logger.warning("Shutdown signal received. Terminating all worker processes...")
-        executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except NameError:
+            logger.warning("Executor not initialized; skipping shutdown.")
         sys.exit(1)
 
     # Register signal handlers
@@ -540,6 +574,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     if len(succeeded) == 0:
         logger.error("All samples failed during QC processing. Output TSV will not be generated.")
         sys.exit(1)
+        
+    # write total success and failure
+    logger.info("Successfully processed samples: %d", len(succeeded))
 
     # Prepare the command-line invocation for comments
     command_invocation = ' '.join(sys.argv)
