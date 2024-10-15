@@ -83,7 +83,9 @@ nav:
       - SnipeSig: SnipeSig.md
       - ReferenceQC: ReferenceQC.md
       - Sketch: Sketch.md
-  - CLI: cli.md
+  - CLI:
+      - Sketch: CLI_Sketch.md
+      - QC: CLI_QC.md
 
 
 
