@@ -14,6 +14,8 @@ from snipe.api.sketch import SnipeSketch
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.reference_QC import ReferenceQC
 
+import concurrent.futures
+import signal
 
 def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str],
                   advanced: bool, roi: bool, debug: bool,
@@ -494,26 +496,42 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         })
     
     
-    # Process samples in parallel with progress bar
     results = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
-        # Submit all tasks
-        futures = {
-            executor.submit(process_sample, **args): args for args in dict_process_args
-        }
-        # Iterate over completed futures with a progress bar
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
-            sample = futures[future]
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as exc:
-                logger.error(f"Sample {sample} generated an exception: {exc}")
-                results.append({
-                    "sample": os.path.splitext(os.path.basename(sample))[0],
-                    "file_path": sample,
-                    "QC_Error": str(exc)
-                })
+    
+    # Define a handler for graceful shutdown
+    def shutdown(signum, frame):
+        logger.warning("Shutdown signal received. Terminating all worker processes...")
+        executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(1)
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
+    
+    try:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
+            futures = {
+                executor.submit(process_sample, **args): args for args in dict_process_args
+            }
+
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
+                sample = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    logger.error(f"Sample {sample['sample_path']} generated an exception: {exc}")
+                    results.append({
+                        "sample": os.path.splitext(os.path.basename(sample['sample_path']))[0],
+                        "file_path": sample['sample_path'],
+                        "QC_Error": str(exc)
+                    })
+    except KeyboardInterrupt:
+        logger.warning("KeyboardInterrupt received. Shutting down...")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}")
+        sys.exit(1)
 
     # Create pandas DataFrame
     logger.info("Aggregating results into DataFrame.")

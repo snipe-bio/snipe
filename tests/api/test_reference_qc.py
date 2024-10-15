@@ -611,7 +611,7 @@ class TestReferenceQC(unittest.TestCase):
         )
         current_coverage = qc.genome_stats["Genome coverage index"]
         self.assertEqual(current_coverage, 1.0)
-        predicted_coverage = qc.predict_coverage(extra_fold=1.0, n=10)
+        predicted_coverage = qc.predict_coverage(extra_fold=2.0)
         # Predicted coverage should still be 1.0
         self.assertEqual(predicted_coverage, 1.0)
 
