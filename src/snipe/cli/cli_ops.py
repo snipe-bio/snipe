@@ -251,6 +251,7 @@ def common_options(func):
         '--name', '-n',
         type=str,
         default=None,
+        required=True,
         help='Name for the output signature.'
     )(func)
     return func
