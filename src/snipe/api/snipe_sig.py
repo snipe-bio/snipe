@@ -16,46 +16,6 @@ class SnipeSig:
     such as customized set operations and abundance management.
     """
 
-    def _try_load_from_json(self, sourmash_sig: str) -> Union[List[sourmash.signature.SourmashSignature], None]:
-        r"""
-        Attempt to load sourmash signature from JSON string.
-
-        Parameters:
-            sourmash_sig (str): JSON string representing a sourmash signature.
-
-        Returns:
-            sourmash.signature.SourmashSignature or None if loading fails.
-        """
-        try:
-            self.logger.debug("Trying to load sourmash signature from JSON.")
-            list_of_sigs = list(sourmash.load_signatures_from_json(sourmash_sig))
-            return {sig.name: sig for sig in list_of_sigs}
-        except Exception as e:
-            self.logger.debug("Loading from JSON failed. Proceeding to file loading.", exc_info=e)
-            return None  # Return None to indicate failure
-
-    def _try_load_from_file(self, sourmash_sig_path: str) -> Union[List[sourmash.signature.SourmashSignature], None]:
-        r"""
-        Attempt to load sourmash signature(s) from a file.
-
-        Parameters:
-            sourmash_sig_path (str): File path to a sourmash signature.
-
-        Returns:
-            sourmash.signature.SourmashßSignature, list of sourmash.signature.SourmashSignature, or None if loading fails.
-        """
-        self.logger.debug("Trying to load sourmash signature from file.")
-        try:
-            signatures = list(sourmash.load_file_as_signatures(sourmash_sig_path))
-            self.logger.debug("Loaded %d sourmash signature(s) from file.", len(signatures))
-            sigs_dict = {_sig.name: _sig for _sig in signatures}
-            self.logger.debug("Loaded sourmash signatures into sigs_dict: %s", sigs_dict)
-            return sigs_dict
-        except Exception as e:
-            self.logger.exception("Failed to load the sourmash signature from the file.", exc_info=e)
-            raise ValueError("An unexpected error occurred while loading the sourmash signature.") from e
-
-
     def __init__(self, *, sourmash_sig: Union[str, sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature],
                  ksize: int = 51, scale: int = 10000, sig_type=SigType.SAMPLE, enable_logging: bool = False, **kwargs):
         r"""
@@ -104,14 +64,11 @@ class SnipeSig:
 
         sourmash_sigs: Dict[str, sourmash.signature.SourmashSignature] = {}
         _sourmash_sig: Union[sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature] = None
+        
+        self.chr_to_sig: Dict[str, SnipeSig] = {}
 
         
         self.logger.debug("Proceeding with a sigtype of %s", sig_type)
-        
-                
-                
-        
-
         
         if not isinstance(sourmash_sig, (str, sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature)):
             # if the str is not a file path
@@ -155,15 +112,28 @@ class SnipeSig:
         elif sig_type == SigType.GENOME:
             if len(sourmash_sigs) > 1:
                 for signame, sig in sourmash_sigs.items():
+                    self.logger.debug(f"Iterating over signature: {signame}")
                     if signame.endswith("-snipegenome"):
                         sig = sig.to_mutable()
                         sig.name = sig.name.replace("-snipegenome", "")
-                        self.logger.debug("Found a genome signature with a snipe modified name. Restoring original name `%s`.", sig.name)
+                        self.logger.debug("Found a genome signature with the snipe suffix `-snipegenome`. Restoring original name `%s`.", sig.name)
                         _sourmash_sig = sig
-                        break
+                    elif signame.startswith("sex-"):
+                        self.logger.debug("Found a sex chr signature %s", signame)
+                        sig = sig.to_mutable()
+                        sig.name = signame.replace("sex-","")
+                        self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
+                    elif signame.startswith("autosome-"):
+                        self.logger.debug("Found an autosome signature %s", signame)
+                        sig = sig.to_mutable()
+                        sig.name = signame.replace("autosome-","")
+                        self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
+                    else:
+                        continue
                 else:
-                    self.logger.debug("Found multiple signature per the genome file, but none with a snipe modified name.")
-                    raise ValueError("Found multiple signature per the genome file, but none with a snipe modified name.")
+                    if not _sourmash_sig:
+                        self.logger.debug("Found multiple signature per the genome file, but none with the snipe suffix `-snipegenome`.")
+                        raise ValueError("Found multiple signature per the genome file, but none with the snipe suffix `-snipegenome`.")
             elif len(sourmash_sigs) == 1:
                 self.logger.debug("Found a single signature in the genome sig input; Will use this signature.")
                 _sourmash_sig = list(sourmash_sigs.values())[0]
@@ -204,6 +174,45 @@ class SnipeSig:
         )
         self.logger.debug("Hashes sorted during initialization.")
         self.logger.debug("Sourmash signature loading completed successfully.")
+
+    def _try_load_from_json(self, sourmash_sig: str) -> Union[List[sourmash.signature.SourmashSignature], None]:
+        r"""
+        Attempt to load sourmash signature from JSON string.
+
+        Parameters:
+            sourmash_sig (str): JSON string representing a sourmash signature.
+
+        Returns:
+            sourmash.signature.SourmashSignature or None if loading fails.
+        """
+        try:
+            self.logger.debug("Trying to load sourmash signature from JSON.")
+            list_of_sigs = list(sourmash.load_signatures_from_json(sourmash_sig))
+            return {sig.name: sig for sig in list_of_sigs}
+        except Exception as e:
+            self.logger.debug("Loading from JSON failed. Proceeding to file loading.", exc_info=e)
+            return None  # Return None to indicate failure
+
+    def _try_load_from_file(self, sourmash_sig_path: str) -> Union[List[sourmash.signature.SourmashSignature], None]:
+        r"""
+        Attempt to load sourmash signature(s) from a file.
+
+        Parameters:
+            sourmash_sig_path (str): File path to a sourmash signature.
+
+        Returns:
+            sourmash.signature.SourmashßSignature, list of sourmash.signature.SourmashSignature, or None if loading fails.
+        """
+        self.logger.debug("Trying to load sourmash signature from file.")
+        try:
+            signatures = list(sourmash.load_file_as_signatures(sourmash_sig_path))
+            self.logger.debug("Loaded %d sourmash signature(s) from file.", len(signatures))
+            sigs_dict = {_sig.name: _sig for _sig in signatures}
+            self.logger.debug("Loaded sourmash signatures into sigs_dict: %s", sigs_dict)
+            return sigs_dict
+        except Exception as e:
+            self.logger.exception("Failed to load the sourmash signature from the file.", exc_info=e)
+            raise ValueError("An unexpected error occurred while loading the sourmash signature.") from e
 
     # Setters and getters
     @property

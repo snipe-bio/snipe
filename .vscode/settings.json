@@ -2,4 +2,8 @@
     "python.analysis.extraPaths": [
         "./src"
     ]
+    // # show line numbers in jupyter notebooks
+    // "jupyter.lineNumbers": "on",
+    // # show line numbers in jup
+
 }

@@ -48,7 +48,7 @@ def cli():
 @click.option('-s', '--sample', type=click.Path(exists=True), help='Sample FASTA file.')
 @click.option('-r', '--ref', type=click.Path(exists=True), help='Reference genome FASTA file.')
 @click.option('-a', '--amplicon', type=click.Path(exists=True), help='Amplicon FASTA file.')
-@click.option('--ychr', type=click.Path(exists=True), help='Y chromosome signature file (required for --ref and --amplicon).')
+@click.option('--ychr', type=click.Path(exists=True), help='Y chromosome FASTA file (overrides the reference ychr).')
 @click.option('-n', '--name', required=True, help='Signature name.')
 @click.option('-o', '--output-file', required=True, callback=validate_zip_file, help='Output file with .zip extension.')
 @click.option('-b', '--batch-size', default=100000, type=int, show_default=True, help='Batch size for sample sketching.')
@@ -210,7 +210,9 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
 
 # Define the top-level process_sample function
 def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str],
-                  advanced: bool, roi: bool, debug: bool) -> Dict[str, Any]:
+                  advanced: bool, roi: bool, debug: bool,
+                  ychr: Optional[str] = None,
+                  vars_paths: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Process a single sample for QC.
 
@@ -221,6 +223,7 @@ def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str]
     - advanced (bool): Flag to include advanced metrics.
     - roi (bool): Flag to calculate ROI.
     - debug (bool): Flag to enable debugging.
+    - vars_paths (Optional[List[str]]): List of variable signature file paths.
 
     Returns:
     - Dict[str, Any]: QC results for the sample.
@@ -259,8 +262,31 @@ def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str]
             enable_logging=debug
         )
         
-        # calculate chromosome metrics
-        qc_instance.calculate_chromosome_metrics()
+        # Load variable signatures if provided
+        if vars_paths:
+            qc_instance.logger.debug(f"Loading {len(vars_paths)} variable signature(s).")
+            vars_dict: Dict[str, SnipeSig] = {}
+            vars_order: List[str] = []
+            for path in vars_paths:
+                qc_instance.logger.debug(f"Loading variable signature from: {path}")
+                var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
+                var_name = var_sig.name if var_sig.name else os.path.basename(path)
+                qc_instance.logger.debug(f"Loaded variable signature: {var_name}")
+                vars_dict[var_name] = var_sig
+                vars_order.append(var_name)
+                logger.debug(f"Loaded variable signature '{var_name}': {var_sig.name}")
+            # Pass variables to ReferenceQC
+            qc_instance.nonref_consume_from_vars(vars=vars_dict, vars_order=vars_order)
+        # No else block needed; variables are optional
+
+        # Calculate chromosome metrics
+        # genome_chr_to_sig: Dict[str, SnipeSig] = qc_instance.load_genome_sig_to_dict(zip_file_path = ref_path)
+        chr_to_sig = reference_sig.chr_to_sig.copy()
+        if ychr:
+            ychr_sig = SnipeSig(sourmash_sig=ychr, sig_type=SigType.GENOME, enable_logging=debug)
+            chr_to_sig['y'] = ychr_sig
+        
+        qc_instance.calculate_chromosome_metrics(chr_to_sig)
 
         # Get aggregated stats
         aggregated_stats = qc_instance.get_aggregated_stats(include_advanced=advanced)
@@ -304,11 +330,13 @@ def process_sample(sample_path: str, ref_path: str, amplicon_path: Optional[str]
 @click.option('--roi', is_flag=True, default=False, help='Calculate ROI for 1,2,5,9 folds.')
 @click.option('--cores', '-c', default=4, type=int, show_default=True, help='Number of CPU cores to use for parallel processing.')
 @click.option('--advanced', is_flag=True, default=False, help='Include advanced QC metrics.')
+@click.option('--ychr', type=click.Path(exists=True), help='Y chromosome signature file (overrides the reference ychr).')
 @click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
 @click.option('-o', '--output', required=True, callback=validate_tsv_file, help='Output TSV file for QC results.')
+@click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Variable signature file path. Can be used multiple times.')
 def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
-       amplicon: Optional[str], roi: bool, cores: int, advanced: bool,
-       debug: bool, output: str):
+       amplicon: Optional[str], roi: bool, cores: int, advanced: bool, 
+       ychr: Optional[str], debug: bool, output: str, vars: List[str]):
     """
     Perform quality control (QC) on multiple samples against a reference genome.
 
@@ -377,18 +405,38 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             logger.error(f"Failed to load amplicon signature from {amplicon}: {e}")
             sys.exit(1)
 
-    # Prepare arguments for parallel processing
-    process_args = [
-        (sample_path, ref, amplicon, advanced, roi, debug)
-        for sample_path in valid_samples
-    ]
+    # Prepare variable signatures if provided
+    vars_paths = []
+    if vars:
+        logger.info(f"Loading {len(vars)} variable signature(s).")
+        for path in vars:
+            if not os.path.exists(path):
+                logger.error(f"Variable signature file does not exist: {path}")
+                sys.exit(1)
+            vars_paths.append(os.path.abspath(path))
+        logger.debug(f"Variable signature paths: {vars_paths}")
 
+    # Prepare arguments for process_sample function    
+    dict_process_args = []
+    for sample_path in valid_samples:
+        dict_process_args.append({
+            "sample_path": sample_path,
+            "ref_path": ref,
+            "amplicon_path": amplicon,
+            "advanced": advanced,
+            "roi": roi,
+            "debug": debug,
+            "ychr": ychr,
+            "vars_paths": vars_paths
+        })
+    
+    
     # Process samples in parallel with progress bar
     results = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
         # Submit all tasks
         futures = {
-            executor.submit(process_sample, *args): args[0] for args in process_args
+            executor.submit(process_sample, **args): args for args in dict_process_args
         }
         # Iterate over completed futures with a progress bar
         for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
