@@ -452,17 +452,21 @@ class ReferenceQC:
             self.logger.debug("Predicted assay type: %s", self.predicted_assay_type)
         
         self.logger.debug("Calculuating error and contamination indices.")
-        sample_nonref = self.sample_sig - self.reference_sig
-        sample_nonref_singletons = sample_nonref.count_singletons()
-        sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
-        sample_total_abundance = self.sample_sig.total_abundance
-        
-        predicted_error_index = sample_nonref_singletons / sample_total_abundance
-        predicted_contamination_index = sample_nonref_non_singletons / sample_total_abundance
+        try:
+            sample_nonref = self.sample_sig - self.reference_sig
+            sample_nonref_singletons = sample_nonref.count_singletons()
+            sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
+            sample_total_abundance = self.sample_sig.total_abundance
+            
+            predicted_error_index = sample_nonref_singletons / sample_total_abundance
+            predicted_contamination_index = sample_nonref_non_singletons / sample_total_abundance
 
-        # predict error and contamination index
-        self.predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
-        self.predicted_error_contamination_index["Sequencing errors index"] = predicted_error_index
+            # predict error and contamination index
+            self.predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
+            self.predicted_error_contamination_index["Sequencing errors index"] = predicted_error_index
+        # except zero division error
+        except ZeroDivisionError:
+            self.logger.error("Please check the sample signature, it seems to be empty.")
         
 
     def get_aggregated_stats(self, include_advanced: bool = False) -> Dict[str, Any]:
