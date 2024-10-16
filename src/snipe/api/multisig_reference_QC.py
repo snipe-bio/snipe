@@ -748,48 +748,51 @@ class MultiSigReferenceQC:
             else:
                 roi_reference_sig = self.reference_sig
                 self.logger.debug("Using reference genome signature as ROI reference.")
-            
-            # splitting the signature into n parts
+
+            # Get sample signature intersected with the reference
             _sample_sig_genome = sample_sig & self.reference_sig
-            hash_to_abund = dict(zip(_sample_sig_genome.hashes, _sample_sig_genome.abundances))
-            
-            # Split the signature into n parts
-            random_split_sigs = [{} for _ in range(nparts)]
+            hashes = _sample_sig_genome.hashes
+            abundances = _sample_sig_genome.abundances
+            N = len(hashes)
 
-            # For each k-mer and its abundance
-            for kmer_hash, abundance in hash_to_abund.items():
-                if abundance == 0:
-                    continue  # Skip zero abundances
+            # Generate random fractions using Dirichlet distribution
+            fractions = np.random.dirichlet([1] * nparts, size=N)  # Shape: (N, nparts)
 
-                counts = np.random.multinomial(abundance, [1.0 / nparts] * nparts)
-                # Update each dictionary
-                for i in range(nparts):
-                    if counts[i] > 0:
-                        random_split_sigs[i][kmer_hash] = counts[i]
-            
-            split_sigs = [
-                SnipeSig.create_from_hashes_abundances(
-                    hashes=np.array(list(kmer_dict.keys()), dtype=np.uint64),
-                    abundances=np.array(list(kmer_dict.values()), dtype=np.uint32),
+            # Calculate counts for each part
+            counts = np.round(abundances[:, None] * fractions).astype(int)  # Shape: (N, nparts)
+
+            # Adjust counts to ensure sums match original abundances
+            differences = abundances - counts.sum(axis=1)
+            indices = np.argmax(counts, axis=1)
+            counts[np.arange(N), indices] += differences
+
+            # Compute cumulative counts
+            counts_cumulative = counts.cumsum(axis=1)  # Shape: (N, nparts)
+            cumulative_total_abundances = counts.sum(axis=0).cumsum()
+
+            coverage_depth_data = []
+
+            # Force conversion to GENOME
+            roi_reference_sig.sigtype = SigType.GENOME
+
+            for i in range(nparts):
+                cumulative_counts = counts_cumulative[:, i]
+                idx = cumulative_counts > 0
+
+                cumulative_hashes = hashes[idx]
+                cumulative_abundances = cumulative_counts[idx]
+
+                cumulative_snipe_sig = SnipeSig.create_from_hashes_abundances(
+                    hashes=cumulative_hashes,
+                    abundances=cumulative_abundances,
                     ksize=sample_sig.ksize,
                     scale=sample_sig.scale,
-                    name=f"{sample_sig.name}_part_{i+1}",
+                    name=f"{sample_sig.name}_cumulative_part_{i+1}",
                     filename=sample_sig.filename,
                     enable_logging=self.enable_logging
                 )
-                for i, kmer_dict in enumerate(random_split_sigs)
-            ]
-            
-            coverage_depth_data = []
 
-            if split_sigs:
-                cumulative_snipe_sig = split_sigs[0].copy()
-                cumulative_total_abundance = cumulative_snipe_sig.total_abundance
-
-                # Force conversion to GENOME
-                roi_reference_sig.sigtype = SigType.GENOME
-
-                # Compute initial coverage index
+                # Compute coverage index
                 cumulative_qc = ReferenceQC(
                     sample_sig=cumulative_snipe_sig,
                     reference_sig=roi_reference_sig,
@@ -797,100 +800,76 @@ class MultiSigReferenceQC:
                 )
                 cumulative_stats = cumulative_qc.get_aggregated_stats()
                 cumulative_coverage_index = cumulative_stats.get("Genome coverage index", 0.0)
+                cumulative_total_abundance = cumulative_total_abundances[i]
 
                 coverage_depth_data.append({
-                    "cumulative_parts": 1,
+                    "cumulative_parts": i + 1,
                     "cumulative_total_abundance": cumulative_total_abundance,
                     "cumulative_coverage_index": cumulative_coverage_index,
                 })
 
-                self.logger.debug("Added initial coverage depth data for part 1.")
+                self.logger.debug("Added coverage depth data for cumulative part %d.", i + 1)
 
-                # Iterate over the rest of the parts
-                for i in range(1, nparts):
-                    current_part = split_sigs[i]
+            self.logger.debug("Coverage vs depth calculation completed.")
 
-                    # Add current part to cumulative signature
-                    cumulative_snipe_sig += current_part
-                    cumulative_total_abundance += current_part.total_abundance
+            for extra_fold in predict_extra_folds:
+                if extra_fold < 1:
+                    self.warning.error("Extra fold must be >= 1. Skipping this extra fold prediction.")
+                    continue
 
-                    # Compute new coverage index
-                    cumulative_qc = ReferenceQC(
-                        sample_sig=cumulative_snipe_sig,
-                        reference_sig=roi_reference_sig,
-                        enable_logging=self.enable_logging
+                # Extract cumulative total abundance and coverage index
+                x_data = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
+                y_data = np.array([d["cumulative_coverage_index"] for d in coverage_depth_data])
+
+                # Saturation model function
+                def saturation_model(x, a, b):
+                    return a * x / (b + x)
+
+                # Initial parameter guesses
+                initial_guess = [y_data[-1], x_data[int(len(x_data) / 2)]]
+
+                # Fit the model to the data
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("error", OptimizeWarning)
+                        params, covariance = curve_fit(
+                            saturation_model,
+                            x_data,
+                            y_data,
+                            p0=initial_guess,
+                            bounds=(0, np.inf),
+                            maxfev=10000
+                        )
+                except (RuntimeError, OptimizeWarning) as exc:
+                    self.logger.error("Curve fitting failed.")
+                    raise RuntimeError("Saturation model fitting failed. Cannot predict coverage.") from exc
+
+                # Check if covariance contains inf or nan
+                if np.isinf(covariance).any() or np.isnan(covariance).any():
+                    self.logger.error("Covariance of parameters could not be estimated.")
+                    raise RuntimeError("Saturation model fitting failed. Cannot predict coverage.")
+
+                a, b = params
+
+                # Predict coverage at increased sequencing depth
+                total_abundance = x_data[-1]
+                predicted_total_abundance = total_abundance * (1 + extra_fold)
+                predicted_coverage = saturation_model(predicted_total_abundance, a, b)
+
+                # Ensure the predicted coverage does not exceed maximum possible coverage
+                max_coverage = 1.0  # Coverage index cannot exceed 1
+                predicted_coverage = min(predicted_coverage, max_coverage)
+                predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
+                _delta_coverage = predicted_coverage - y_data[-1]
+                predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
+                if _delta_coverage < 0:
+                    self.logger.warning(
+                        "Predicted coverage at %.2f-fold increase is less than the current coverage (probably low complexity).",
+                        extra_fold
                     )
-                    
-                    cumulative_stats = cumulative_qc.get_aggregated_stats()
-                    cumulative_coverage_index = cumulative_stats.get("Genome coverage index", 0.0)
+                self.logger.debug("Predicted coverage at %.2f-fold increase: %f", extra_fold, predicted_coverage)
+                self.logger.debug("Predicted delta coverage at %.2f-fold increase: %f", extra_fold, _delta_coverage)
 
-                    coverage_depth_data.append({
-                        "cumulative_parts": i + 1,
-                        "cumulative_total_abundance": cumulative_total_abundance,
-                        "cumulative_coverage_index": cumulative_coverage_index,
-                    })
-
-                    self.logger.debug("Added coverage depth data for part %d.", i + 1)
-
-                self.logger.debug("Coverage vs depth calculation completed.")
-
-                for extra_fold in predict_extra_folds:
-                    if extra_fold < 1:
-                        self.warning.error("Extra fold must be greater >= 1. Skipping this extra fold prediction.")
-                        continue
-
-                    # Extract cumulative total abundance and coverage index
-                    x_data = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
-                    y_data = np.array([d["cumulative_coverage_index"] for d in coverage_depth_data])
-
-                    # Saturation model function
-                    def saturation_model(x, a, b):
-                        return a * x / (b + x)
-
-                    # Initial parameter guesses
-                    initial_guess = [y_data[-1], x_data[int(len(x_data) / 2)]]
-
-                    # Fit the model to the data
-                    try:
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("error", OptimizeWarning)
-                            params, covariance = curve_fit(
-                                saturation_model,
-                                x_data,
-                                y_data,
-                                p0=initial_guess,
-                                bounds=(0, np.inf),
-                                maxfev=10000
-                            )
-                    except (RuntimeError, OptimizeWarning) as exc:
-                        self.logger.error("Curve fitting failed.")
-                        raise RuntimeError("Saturation model fitting failed. Cannot predict coverage.") from exc
-
-                    # Check if covariance contains inf or nan
-                    if np.isinf(covariance).any() or np.isnan(covariance).any():
-                        self.logger.error("Covariance of parameters could not be estimated.")
-                        raise RuntimeError("Saturation model fitting failed. Cannot predict coverage.")
-
-                    a, b = params
-
-                    # Predict coverage at increased sequencing depth
-                    total_abundance = x_data[-1]
-                    predicted_total_abundance = total_abundance * (1 + extra_fold)
-                    predicted_coverage = saturation_model(predicted_total_abundance, a, b)
-
-                    # Ensure the predicted coverage does not exceed maximum possible coverage
-                    max_coverage = 1.0  # Coverage index cannot exceed 1
-                    predicted_coverage = min(predicted_coverage, max_coverage)
-                    predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
-                    _delta_coverage =  predicted_coverage - cumulative_coverage_index
-                    predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
-                    if _delta_coverage < 0:
-                        self.logger.warning("Predicted coverage at %.2f-fold increase is less than the current coverage (probably low complexity).", extra_fold)
-                    self.logger.debug("Predicted coverage at %.2f-fold increase: %f", extra_fold, predicted_coverage)
-                    self.logger.debug("Predicted delta coverage at %.2f-fold increase: %f", extra_fold, _delta_coverage)
-            else:
-                self.logger.warning("No split signatures found. Skipping coverage prediction.")
-        
             # Update the ROI stats
             roi_stats.update(predicted_fold_coverage)
             roi_stats.update(predicted_fold_delta_coverage)
