@@ -696,7 +696,8 @@ class ReferenceQC:
 
         self.logger.debug("No cached splits found for n=%d. Proceeding to split.", n)
         # Get k-mers and abundances
-        hash_to_abund = dict(zip(self.sample_sig.hashes, self.sample_sig.abundances))
+        _sample_genome = self.sample_sig & self.reference_sig
+        hash_to_abund = dict(zip(_sample_genome.hashes, _sample_genome.abundances))
         random_split_sigs = self.distribute_kmers_random(hash_to_abund, n)
         split_sigs = [
             SnipeSig.create_from_hashes_abundances(
