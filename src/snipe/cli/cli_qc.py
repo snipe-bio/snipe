@@ -12,7 +12,7 @@ import concurrent.futures
 from snipe.api.enums import SigType
 from snipe.api.sketch import SnipeSketch
 from snipe.api.snipe_sig import SnipeSig
-from snipe.api.reference_QC import ReferenceQC
+from snipe.api.multisig_reference_QC import MultiSigReferenceQC
 
 import signal
 
@@ -25,110 +25,7 @@ def validate_sig_input(ctx, param, value: tuple) -> str:
         if not any(path.lower().endswith(ext) for ext in supported_extensions):
             raise click.BadParameter(f"Unsupported file format: {path}, supported formats: {', '.join(supported_extensions)}")
 
-def process_sample(sample_path: str, reference_sig: SnipeSig, amplicon_sig: Optional[SnipeSig],
-                  advanced: bool, roi: bool, debug: bool,
-                  ychr_sig: Optional[SnipeSig] = None,
-                  var_sigs: Optional[List[SnipeSig]] = None) -> Dict[str, Any]:
-    """
-    Process a single sample for QC.
 
-    Parameters:
-    - sample_path (str): Path to the sample signature file.
-    - ref_path (str): Path to the reference signature file.
-    - amplicon_path (Optional[str]): Path to the amplicon signature file.
-    - advanced (bool): Flag to include advanced metrics.
-    - roi (bool): Flag to calculate ROI.
-    - debug (bool): Flag to enable debugging.
-    - vars_paths (Optional[Union[List[str], List[SnipeSig]]]): List of paths to variable signature files or SnipeSig objects.
-
-    Returns:
-    - Dict[str, Any]: QC results for the sample.
-    """
-    # Configure worker-specific logging
-    logger = logging.getLogger(f'snipe_qc_worker_{os.path.basename(sample_path)}')
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    if not logger.hasHandlers():
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.DEBUG if debug else logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    sample_name = os.path.splitext(os.path.basename(sample_path))[0]
-    try:
-        # Load sample signature
-        sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
-        logger.debug(f"Loaded sample signature: {sample_sig.name}")
-
-        # Instantiate ReferenceQC
-        qc_instance = ReferenceQC(
-            sample_sig=sample_sig,
-            reference_sig=reference_sig,
-            amplicon_sig=amplicon_sig,
-            enable_logging=debug
-        )
-        
-        # Load variable signatures if provided
-        if var_sigs:
-            qc_instance.logger.debug(f"Loading {len(var_sigs)} variable signature(s).")
-            vars_dict: Dict[str, SnipeSig] = {sig.name: sig for sig in var_sigs}
-            qc_instance.logger.debug(f"vars_dict: {vars_dict}")
-            vars_order: List[str] = []
-                            
-            qc_instance.logger.debug("Loading variable signature(s) from SnipeSig objects.")
-            for snipe_name in vars_dict.keys():
-                vars_order.append(snipe_name)
-                qc_instance.logger.debug(f"Loaded variable signature: {snipe_name}")
-                
-            # log keys of vars_dict and vars_order
-            qc_instance.logger.debug(f"vars_dict keys: {vars_dict.keys()}")
-            qc_instance.logger.debug(f"vars_order: {vars_order}")
-            
-            qc_instance.nonref_consume_from_vars(vars=vars_dict, vars_order=vars_order)
-            
-        # No else block needed; variables are optional
-
-        # Calculate chromosome metrics
-        # genome_chr_to_sig: Dict[str, SnipeSig] = qc_instance.load_genome_sig_to_dict(zip_file_path = ref_path)
-        chr_to_sig = reference_sig.chr_to_sig.copy()
-        if ychr_sig:
-            chr_to_sig['y'] = ychr_sig
-        
-        qc_instance.calculate_chromosome_metrics(chr_to_sig)
-
-        # Get aggregated stats
-        aggregated_stats = qc_instance.get_aggregated_stats(include_advanced=advanced)
-
-        # Initialize result dict
-        result = {
-            "sample": sample_name,
-            "file_path": os.path.abspath(sample_path),
-        }
-        # Add aggregated stats
-        result.update(aggregated_stats)
-
-        # Calculate ROI if requested
-        if roi:
-            logger.debug(f"Calculating ROI for sample: {sample_name}")
-            for fold in [1, 2, 5, 9]:
-                try:
-                    predicted_coverage = qc_instance.predict_coverage(extra_fold=fold)
-                    result[f"Predicted_Coverage_Fold_{fold}x"] = predicted_coverage
-                    logger.debug(f"Fold {fold}x: Predicted Coverage = {predicted_coverage}")
-                except RuntimeError as e:
-                    logger.error(f"ROI calculation failed for sample {sample_name} at fold {fold}x: {e}")
-                    result[f"Predicted_Coverage_Fold_{fold}x"] = None
-
-        return result
-
-    except Exception as e:
-        logger.error(f"QC failed for sample {sample_path}: {e}")
-        return {
-            "sample": sample_name,
-            "file_path": os.path.abspath(sample_path),
-            "QC_Error": str(e)
-        }
-        
 def validate_tsv_file(ctx, param, value: str) -> str:
     if not value.lower().endswith('.tsv'):
         raise click.BadParameter('Output file must have a .tsv extension.')
@@ -501,64 +398,36 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                 logger.error(f"Failed to load variable signature from {path}: {e}")
                 
         logger.debug(f"Variable signature paths: {vars_paths}")
-
-    # Prepare arguments for process_sample function    
-    dict_process_args = []
-    for sample_path in valid_samples:
-        dict_process_args.append({
-            "sample_path": sample_path,
-            "reference_sig": reference_sig,
-            "amplicon_sig": amplicon_sig,
-            "advanced": advanced,
-            "roi": roi,
-            "debug": debug,
-            "ychr_sig": ychr_sig,
-            "var_sigs": vars_snipesigs #vars_paths
-        })
         
-    results = []
+
+    predict_extra_folds = [2, 5, 9]
     
-    # Define a handler for graceful shutdown
-    def shutdown(signum, frame):
-        logger.warning("Shutdown signal received. Terminating all worker processes...")
+    
+    qc_instance = MultiSigReferenceQC(
+            reference_sig=reference_sig,
+            amplicon_sig=amplicon_sig,
+            varsigs=vars_snipesigs if vars_snipesigs else None,
+            enable_logging=debug
+        )
+    
+    sample_to_stats = {}
+    failed_samples = []
+    for sample_path in tqdm(valid_samples):
+        sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
         try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except NameError:
-            logger.warning("Executor not initialized; skipping shutdown.")
-        sys.exit(1)
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
+            sample_stats = qc_instance.process_sample(sample_sig=sample_sig,
+                          predict_extra_folds = predict_extra_folds if roi else None,
+                          advanced=advanced)
+            sample_to_stats[sample_sig.name] = sample_stats
+        except Exception as e:
+            failed_samples.append(sample_sig.name)
+            qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
+            continue
     
-    try:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
-            futures = {
-                executor.submit(process_sample, **args): args for args in dict_process_args
-            }
-
-            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples"):
-                sample = futures[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as exc:
-                    logger.error(f"Sample {sample['sample_path']} generated an exception: {exc}")
-                    results.append({
-                        "sample": os.path.splitext(os.path.basename(sample['sample_path']))[0],
-                        "file_path": sample['sample_path'],
-                        "QC_Error": str(exc)
-                    })
-    except KeyboardInterrupt:
-        logger.warning("KeyboardInterrupt received. Shutting down...")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
-        sys.exit(1)
-
+    
     # Separate successful and failed results
-    succeeded = [res for res in results if "QC_Error" not in res]
-    failed = [res for res in results if "QC_Error" in res]
+    succeeded = list(sample_to_stats.keys())
+    failed = len(failed_samples)
 
     # Handle complete failure
     if len(succeeded) == 0:
@@ -572,7 +441,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     command_invocation = ' '.join(sys.argv)
 
     # Create pandas DataFrame for succeeded samples
-    df = pd.DataFrame(succeeded)
+    df = pd.DataFrame(sample_to_stats.values())
 
     # Reorder columns to have 'sample' and 'file_path' first, if they exist
     cols = list(df.columns)
