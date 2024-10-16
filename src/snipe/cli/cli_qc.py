@@ -8,6 +8,7 @@ import click
 import pandas as pd
 from tqdm import tqdm
 import concurrent.futures
+import threading
 
 from snipe.api.enums import SigType
 from snipe.api.sketch import SnipeSketch
@@ -400,31 +401,68 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         logger.debug(f"Variable signature paths: {vars_paths}")
         
 
-    predict_extra_folds = [2, 5, 9]
+    predict_extra_folds = [1, 2, 5, 9]
     
-    
+    # Initialize QC instance once
     qc_instance = MultiSigReferenceQC(
             reference_sig=reference_sig,
             amplicon_sig=amplicon_sig,
+            ychr=ychr_sig if ychr_sig else None,
             varsigs=vars_snipesigs if vars_snipesigs else None,
             enable_logging=debug
         )
-    
+
     sample_to_stats = {}
     failed_samples = []
-    for sample_path in tqdm(valid_samples):
-        sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+
+    # Define a lock for thread-safe operations
+    lock = threading.Lock()
+
+    def process_sample_wrapper(sample_path: str):
+        nonlocal sample_to_stats, failed_samples
         try:
-            sample_stats = qc_instance.process_sample(sample_sig=sample_sig,
-                          predict_extra_folds = predict_extra_folds if roi else None,
-                          advanced=advanced)
-            sample_to_stats[sample_sig.name] = sample_stats
+            sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+            sample_stats = qc_instance.process_sample(
+                sample_sig=sample_sig,
+                predict_extra_folds=predict_extra_folds if roi else None,
+                advanced=advanced
+            )
+            with lock:
+                sample_to_stats[sample_sig.name] = sample_stats
         except Exception as e:
-            failed_samples.append(sample_sig.name)
-            qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
-            continue
-    
-    
+            sample_name = os.path.basename(sample_path)
+            with lock:
+                failed_samples.append(sample_name)
+                qc_instance.logger.error(f"Failed to process sample {sample_name}: {e}")
+
+    # Setup for graceful shutdown
+    shutdown_event = threading.Event()
+
+    def signal_handler(signum, frame):
+        logger.warning("Interrupt received, shutting down...")
+        shutdown_event.set()
+
+    # Register the signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+
+    logger.info(f"Processing samples with {cores} core(s).")
+
+    # Parallelize the process_sample calls
+    with concurrent.futures.ThreadPoolExecutor(max_workers=cores) as executor:
+        # Submit all tasks
+        futures = {executor.submit(process_sample_wrapper, sample): sample for sample in valid_samples}
+        try:
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
+                if shutdown_event.is_set():
+                    logger.info("Shutdown event detected. Cancelling remaining tasks...")
+                    executor.shutdown(wait=False)
+                    break
+        except KeyboardInterrupt:
+            logger.warning("Keyboard interrupt received. Attempting to shut down gracefully...")
+            shutdown_event.set()
+            executor.shutdown(wait=False)
+            sys.exit(1)
+
     # Separate successful and failed results
     succeeded = list(sample_to_stats.keys())
     failed = len(failed_samples)
@@ -467,7 +505,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
 
     # Report failed samples if any
     if failed:
-        failed_samples = [res['sample'] for res in failed]
         logger.warning(f"The following {len(failed_samples)} sample(s) failed during QC processing:")
         for sample in failed_samples:
             logger.warning(f"- {sample}")
