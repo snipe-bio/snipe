@@ -147,7 +147,7 @@ def validate_tsv_file(ctx, param, value: str) -> str:
 @click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
 @click.option('-o', '--output', required=True, callback=validate_tsv_file, help='Output TSV file for QC results.')
 @click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Variable signature file path. Can be used multiple times.')
-def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
+def parallel_qc(ref: str, sample: List[str], samples_from_file: Optional[str],
        amplicon: Optional[str], roi: bool, cores: int, advanced: bool, 
        ychr: Optional[str], debug: bool, output: str, vars: List[str]):
     """
@@ -408,10 +408,11 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         A TSV file named `qc_comprehensive.tsv` containing comprehensive QC metrics, including advanced analyses, ROI predictions, and data from amplicon and variable signatures for both `sample1.sig` and `sample2.sig`.
     """
     
+    
     start_time = time.time()
 
     # Configure logging
-    logger = logging.getLogger('snipe_qc')
+    logger = logging.getLogger('snipe_qc_parallel')
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG if debug else logging.INFO)
@@ -421,6 +422,11 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         logger.addHandler(handler)
 
     logger.info("Starting QC process.")
+    
+    # warning of high memory usage if used large var files
+    if vars:
+        logger.warning("Using large variable signature files may result in high memory usage.")
+
 
     # Collect sample paths from --sample and --samples-from-file
     samples_set: Set[str] = set()
@@ -518,21 +524,22 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         
     results = []
     
-    # Define a handler for graceful shutdown
+    # Define a handler for forceful shutdown
+    executor = None
     def shutdown(signum, frame):
         logger.warning("Shutdown signal received. Terminating all worker processes...")
-        try:
+        global executor
+        if executor:
             executor.shutdown(wait=False, cancel_futures=True)
-        except NameError:
-            logger.warning("Executor not initialized; skipping shutdown.")
-        sys.exit(1)
+        os._exit(1)  # Forcefully terminate the program
 
     # Register signal handlers
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
     
     try:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as exec_instance:
+            executor = exec_instance  # Assign the executor instance
             futures = {
                 executor.submit(process_sample, **args): args for args in dict_process_args
             }
@@ -551,10 +558,12 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                     })
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received. Shutting down...")
-        sys.exit(1)
+        os._exit(1)  # Forcefully terminate the program
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
-        sys.exit(1)
+        os._exit(1)  # Forcefully terminate the program
+    finally:
+        executor = None  # Reset executor
 
     # Separate successful and failed results
     succeeded = [res for res in results if "QC_Error" not in res]

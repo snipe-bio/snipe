@@ -17,6 +17,7 @@ from snipe.api.reference_QC import ReferenceQC
 from snipe.cli.cli_qc import qc as cli_qc
 from snipe.cli.cli_sketch import sketch as cli_sketch
 from snipe.cli.cli_ops import ops as cli_ops
+from snipe.cli.cli_qc_parallel import parallel_qc
 
 # pylint: disable=logging-fstring-interpolation
 
@@ -31,11 +32,14 @@ def cli():
     Commands:
     - `sketch`: Perform sketching operations on genomic data.
     - `qc`: Execute quality control (QC) on multiple samples against a reference genome.
+    - `parallel-qc`: Parallelized version of the `qc` command (not optimized for memory).
+    - `ops`: Perform various operations on sketches.
     """
     pass
 
 
 cli.add_command(cli_qc)
+cli.add_command(parallel_qc)
 cli.add_command(cli_sketch)
 cli.add_command(cli_ops)
 
