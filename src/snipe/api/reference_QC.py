@@ -1721,5 +1721,3 @@ class PreparedQC(ReferenceQC):
             self.logger.debug(f"Filename derived from URL: {filename}")
 
         return filename
-    
-    
