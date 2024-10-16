@@ -1,9 +1,8 @@
 import heapq
 import logging
 
-import sourmash.save_load
 from snipe.api.enums import SigType
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Dict, Iterator, List, Union, Optional
 import numpy as np
 import sourmash
 import os
@@ -18,8 +17,9 @@ class SnipeSig:
     such as customized set operations and abundance management.
     """
 
-    def __init__(self, *, sourmash_sig: Union[str, sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature],
-                 ksize: int = 51, scale: int = 10000, sig_type=SigType.SAMPLE, enable_logging: bool = False, **kwargs):
+    def __init__(self, *, 
+                 sourmash_sig: Union[str, sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature], 
+                 sig_type=SigType.SAMPLE, enable_logging: bool = False, **kwargs):
         r"""
         Initialize the SnipeSig with a sourmash signature object or a path to a signature.
 
@@ -54,15 +54,15 @@ class SnipeSig:
         # Initialize internal variables
         self.logger.debug("Initializing SnipeSig with sourmash_sig: %s", sourmash_sig)
 
-        self._scale = scale
-        self._ksize = ksize
-        self._md5sum = None
+        self._scale: int = None
+        self._ksize: int = None
+        self._md5sum: str = None
         self._hashes = np.array([], dtype=np.uint64)
         self._abundances = np.array([], dtype=np.uint32)
-        self._type = sig_type
-        self._name = None
-        self._filename = None
-        self._track_abundance = False
+        self._type: SigType = sig_type
+        self._name: str = None
+        self._filename: str = None
+        self._track_abundance: bool = True
 
         sourmash_sigs: Dict[str, sourmash.signature.SourmashSignature] = {}
         _sourmash_sig: Union[sourmash.signature.SourmashSignature, sourmash.signature.FrozenSourmashSignature] = None
@@ -117,18 +117,19 @@ class SnipeSig:
                     self.logger.debug(f"Iterating over signature: {signame}")
                     if signame.endswith("-snipegenome"):
                         sig = sig.to_mutable()
+                        # self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.GENOME, enable_logging=enable_logging)
                         sig.name = sig.name.replace("-snipegenome", "")
                         self.logger.debug("Found a genome signature with the snipe suffix `-snipegenome`. Restoring original name `%s`.", sig.name)
                         _sourmash_sig = sig
                     elif signame.startswith("sex-"):
                         self.logger.debug("Found a sex chr signature %s", signame)
                         sig = sig.to_mutable()
-                        sig.name = signame.replace("sex-","")
+                        # sig.name = signame.replace("sex-","")
                         self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
                     elif signame.startswith("autosome-"):
                         self.logger.debug("Found an autosome signature %s", signame)
                         sig = sig.to_mutable()
-                        sig.name = signame.replace("autosome-","")
+                        # sig.name = signame.replace("autosome-","")
                         self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
                     else:
                         continue
@@ -281,6 +282,13 @@ class SnipeSig:
         Set the type of the signature.
         """
         self._type = sigtype
+        
+    @track_abundance.setter
+    def track_abundance(self, track_abundance: bool):
+        r"""
+        Set whether the signature tracks abundance.
+        """
+        self._track_abundance = track_abundance
 
     def get_info(self) -> dict:
         r"""
@@ -490,7 +498,10 @@ class SnipeSig:
         self.logger.debug("Converting SnipeSig to sourmash.signature.SourmashSignature.")
 
         mh = sourmash.minhash.MinHash(n=0, ksize=self._ksize, scaled=self._scale, track_abundance=self._track_abundance)
-        mh.set_abundances(dict(zip(self._hashes, self._abundances)))
+        if self._track_abundance:
+            mh.set_abundances(dict(zip(self._hashes, self._abundances)))
+        else:
+            mh.add_many(self._hashes)
         self.sourmash_sig = sourmash.signature.SourmashSignature(mh, name=self._name, filename=self._filename)
         self.logger.debug("Conversion to sourmash.signature.SourmashSignature completed.")
 
@@ -516,7 +527,7 @@ class SnipeSig:
                 with sourmash.save_load.SaveSignatures_ZipFile(path) as save_sigs:
                     save_sigs.add(self.sourmash_sig)
             except Exception as e:
-                logging.error("Failed to export signatures to zip: %s", e)
+                self.logger.error("Failed to export signatures to zip: %s", e)
                 raise Exception(f"Failed to export signatures to zip: {e}") from e
         else:
             raise ValueError("Output file must be either a .sig or .zip file.")
@@ -1273,6 +1284,7 @@ class SnipeSig:
         self._validate_abundance_operation(new_abundance, "reset abundance")
 
         self._abundances[:] = new_abundance
+        self.track_abundance = True
         self.logger.debug("Reset all abundances to %d.", new_abundance)
 
     def keep_min_abundance(self, min_abundance: int):
