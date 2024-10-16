@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from typing import Optional
 import sourmash
 from snipe.api.reference_QC import ReferenceQC
+import concurrent
 
 # pylint disable C0301
 
@@ -332,7 +333,6 @@ class MultiSigReferenceQC:
         self.relative_total_abundance_grey_zone = [0.08092723407173719, 0.11884490500267662]
 
 
-    
     def process_sample(self, sample_sig: SnipeSig, predict_extra_folds: Optional[List[int]] = None, advanced: Optional[bool] = False) -> Dict[str, Any]:
         
         # ============= Attributes =============
@@ -735,7 +735,7 @@ class MultiSigReferenceQC:
                 len(sample_nonref), sample_nonref.total_abundance
             )
             
-            
+
         # ============= Coverage Prediction (ROI) =============
         
         if predict_extra_folds:
@@ -750,7 +750,8 @@ class MultiSigReferenceQC:
                 self.logger.debug("Using reference genome signature as ROI reference.")
             
             # splitting the signature into n parts
-            hash_to_abund = dict(zip(sample_sig.hashes, sample_sig.abundances))
+            _sample_sig_genome = sample_sig & self.reference_sig
+            hash_to_abund = dict(zip(_sample_sig_genome.hashes, _sample_sig_genome.abundances))
             
             # Split the signature into n parts
             random_split_sigs = [{} for _ in range(nparts)]
