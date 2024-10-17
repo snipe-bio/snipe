@@ -1315,8 +1315,7 @@ class ReferenceQC:
             self.logger.warning("Autosomal mean abundance is zero. Setting X-Ploidy score to zero to avoid division by zero.")
             xploidy_score = 0.0
         else:
-            xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) * \
-                            (len(autosomals_genome_sig) / len(specific_xchr_sig) if len(specific_xchr_sig) > 0 else 0.0)
+            xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
         
         self.logger.debug("Calculated X-Ploidy score: %.4f", xploidy_score)
         self.sex_stats.update({"X-Ploidy score": xploidy_score})
