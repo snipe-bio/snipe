@@ -1133,6 +1133,7 @@ class ReferenceQC:
         for chr_name, mean_abundance in chr_to_mean_abundance.items():
             if "sex" in chr_name.lower():
                 continue
+            self.logger.debug("Adding %s to autosomal chromosomes.", chr_name)
             autosomal_chr_to_mean_abundance[chr_name] = mean_abundance
         
         
@@ -1144,7 +1145,7 @@ class ReferenceQC:
             self.logger.debug("Calculated Autosomal CV: %f", cv)
         else:
             self.logger.warning("No autosomal chromosomes were processed. 'Autosomal_CV' set to None.")
-            self.chrs_stats.update({"Autosomal_CV": None})
+            self.sex.update({"Autosomal_CV": None})
         
         # optional return, not required
         return self.chrs_stats
@@ -1299,7 +1300,7 @@ class ReferenceQC:
         self.logger.debug("\t-Derived X chromosome-specific signature size: %d hashes.", len(specific_xchr_sig))
         
         # Intersect the sample signature with chromosome-specific signatures
-        sample_specific_xchr_sig = self.sample_sig & specific_xchr_sig
+        sample_specific_xchr_sig = self.sample_sig & specific_chr_to_sig['sex-x'] # specific_xchr_sig
         if len(sample_specific_xchr_sig) == 0:
             self.logger.warning("No X chromosome-specific k-mers found in the sample signature.")
         self.logger.debug("\t-Intersected sample signature with X chromosome-specific k-mers = %d hashes.", len(sample_specific_xchr_sig))

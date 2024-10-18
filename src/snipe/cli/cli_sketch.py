@@ -223,6 +223,7 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
             # Log the detected chromosomes
             autosomal = [name for name in chr_to_sig.keys() if "autosome" in name.lower()]
             sex = [name for name in chr_to_sig.keys() if "sex" in name.lower()]
+            mitochondrial = [name for name in chr_to_sig.keys() if "mito" in name.lower()]
 
             click.echo("Autodetected chromosomes:")
             for i, chr_name in enumerate(chr_to_sig.keys(), 1):
@@ -232,7 +233,7 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
             if len(chr_to_sig) % 6 != 0:
                 click.echo()  # For newline after the last line
 
-            click.echo(f"Autosomal chromosomes: {len(autosomal)}, Sex chromosomes: {len(sex)}")
+            click.echo(f"Autosomal chromosomes: {len(autosomal)}, Sex chromosomes: {len(sex)}, Mitochondrial: {len(mitochondrial)}")
             
             # Export genome and chromosome signatures to a ZIP file
             SnipeSketch.export_sigs_to_zip(

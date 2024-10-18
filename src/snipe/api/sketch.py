@@ -358,12 +358,15 @@ class SnipeSketch:
                     name = match.group(1) if match else "unknown"
                 elif stype in {"mitochondrial DNA", "chloroplast DNA"}:
                     name = stype.split()[0]
+                    stype = name.lower()
                 elif stype == "chromosome":
                     match = re.search(r"(?:chromosome|chr)[_\s]*([^\s,]+)", header_lower)
                     if match:
                         name = match.group(1).rstrip(".,")
                         if name.upper() in {"X", "Y", "W", "Z"}:
                             stype = "sex"
+                        elif name.upper() == "M":
+                            stype = "mitochondrial"
                         else:
                             stype = "autosome"
                 elif stype == "reference chromosome":
@@ -417,9 +420,11 @@ class SnipeSketch:
             with mh_lock:
                 mh_full.merge(current_mh)
 
-            if seq_type in {"sex", "autosome"}:
+            if seq_type in {"sex", "autosome", "mitochondrial"}:
                 with chr_lock:
                     key = f"{seq_type}-{seq_name}"
+                    if seq_type == "mitochondrial":
+                        key = "mitochondrial-M"
                     if key not in chr_to_mh:
                         chr_to_mh[key] = current_mh
                     else:
