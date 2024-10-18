@@ -721,6 +721,7 @@ class MultiSigReferenceQC:
             self.logger.debug("\t-Size of non-reference k-mers after trimming singletons: %d hashes.", len(sample_nonref))
             
             sample_nonref_unique_hashes = len(sample_nonref)
+            sample_nonref_total_abundance = sample_nonref.total_abundance
             
             self.logger.debug("\t-Size of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
             if len(sample_nonref) == 0:
@@ -741,19 +742,20 @@ class MultiSigReferenceQC:
                     sample_nonref_var.export(f"{sample_sig.name}_{variance_name}_nonref.zip")
 
                 sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
-                sample_nonref_var_unique_hashes = len(sample_nonref_var)
-                sample_nonref_var_coverage_index = sample_nonref_var_unique_hashes / sample_nonref_unique_hashes
+                sample_nonref_var_fraction_total = sample_nonref_var_total_abundance / sample_nonref_total_abundance
                 vars_nonref_stats.update({
-                    f"{variance_name} non-genomic total k-mer abundance": sample_nonref_var_total_abundance,
-                    f"{variance_name} non-genomic coverage index": sample_nonref_var_coverage_index
+                    f"{variance_name} total k-mer abundance": sample_nonref_var_total_abundance,
+                    f"{variance_name} mean abundance": sample_nonref.mean_abundance,
+                    f"{variance_name} fraction of total abundance": sample_nonref_var_fraction_total
                 })
                 
                 self.logger.debug("\t-Consuming non-reference k-mers from variable '%s'.", variance_name)
                 sample_nonref -= sample_nonref_var
                 self.logger.debug("\t-Size of remaining non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
                 
-            vars_nonref_stats["non-var non-genomic total k-mer abundance"] = sample_nonref.total_abundance
-            vars_nonref_stats["non-var non-genomic coverage index"] = len(sample_nonref) / sample_nonref_unique_hashes if sample_nonref_unique_hashes > 0 else 0.0
+            vars_nonref_stats["unexplained variance total abundance"] = sample_nonref.total_abundance
+            vars_nonref_stats["unexplained variance mean abundance"] = sample_nonref.mean_abundance
+            vars_nonref_stats["unexplained variance fraction of total abundance"] = sample_nonref.total_abundance / sample_nonref_total_abundance if sample_nonref_total_abundance > 0 else 0.0
             
             self.logger.debug(
                 "After consuming all vars from the non reference k-mers, the size of the sample signature is: %d hashes, "
