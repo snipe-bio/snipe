@@ -24,6 +24,7 @@ def validate_sig_input(ctx, param, value: tuple) -> str:
             raise click.BadParameter(f"File not found: {path}")
         if not any(path.lower().endswith(ext) for ext in supported_extensions):
             raise click.BadParameter(f"Unsupported file format: {path}, supported formats: {', '.join(supported_extensions)}")
+    return value
 
 def process_sample(sample_path: str, reference_sig: SnipeSig, amplicon_sig: Optional[SnipeSig],
                   advanced: bool, roi: bool, debug: bool,
@@ -95,7 +96,7 @@ def process_sample(sample_path: str, reference_sig: SnipeSig, amplicon_sig: Opti
             chr_to_sig['y'] = ychr_sig
         
         qc_instance.calculate_chromosome_metrics(chr_to_sig)
-
+        qc_instance.calculate_sex_chrs_metrics(chr_to_sig)
         # Get aggregated stats
         aggregated_stats = qc_instance.get_aggregated_stats(include_advanced=advanced)
 

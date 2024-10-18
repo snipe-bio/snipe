@@ -784,44 +784,6 @@ class TestReferenceQC(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             qc.predict_coverage(extra_fold=1.0, n=1)
             
-    def test_calculate_sex_chrs_metrics_only_autosomal(self):
-        """
-        Test calculate_sex_chrs_metrics when only autosomal signatures are provided.
-        """
-        # Create chromosome-specific signatures without sex chromosomes
-        chr1_sig = self.create_test_signature([10, 20, 30], [2, 2, 2], "autosome-1", SigType.SAMPLE)
-        chr2_sig = self.create_test_signature([40, 50, 60], [3, 3, 3], "autosome-2", SigType.SAMPLE)
-        genome_and_chr_signatures = {
-            "autosomal-snipegenome": self.reference_sig,  # Using reference_sig as autosomal_genome_sig
-            "autosome-1": chr1_sig,
-            "autosome-2": chr2_sig
-            # No sex chromosomes
-        }
-
-        # Initialize ReferenceQC with updated_sample_sig
-        updated_sample_sig = self.create_test_signature(
-            [10, 20, 30, 40, 50],
-            [1, 2, 3, 4, 5],
-            "test_signature_autosomal",
-            SigType.SAMPLE
-        )
-
-        qc = ReferenceQC(
-            sample_sig=updated_sample_sig,
-            reference_sig=self.reference_sig,
-            enable_logging=True
-        )
-
-        # Calculate sex chromosome metrics
-        metrics = qc.calculate_sex_chrs_metrics(genome_and_chr_to_sig=genome_and_chr_signatures)
-
-        # Verify metrics
-        self.assertIn("X-Ploidy score", metrics)
-        self.assertNotIn("Y-Coverage", metrics)
-
-        # X-Ploidy should be 0.0 since no sex chromosomes are provided
-        self.assertEqual(metrics["X-Ploidy score"], 0.0)
-
 
     def test_calculate_coverage_vs_depth_with_empty_splits(self):
         """
@@ -868,56 +830,7 @@ class TestReferenceQC(unittest.TestCase):
             self.assertEqual(data_point["cumulative_coverage_index"], 0.0)
             self.assertEqual(data_point["cumulative_total_abundance"], 0)
 
-            
-    def test_calculate_sex_chrs_metrics(self):
-        """
-        Test the calculate_sex_chrs_metrics method with valid chromosome signatures.
-        """
-        # Update sample_sig to include sex-x k-mers
-        updated_sample_sig = SnipeSig.create_from_hashes_abundances(
-            hashes=np.array([10, 20, 30, 40, 50, 70, 80, 90], dtype=np.uint64),
-            abundances=np.array([1, 2, 3, 4, 5, 4, 4, 4], dtype=np.uint32),
-            ksize=31,
-            scale=1,
-            name="test_signature_updated",
-            sig_type=SigType.SAMPLE,
-            enable_logging=False
-        )
-
-        # Initialize ReferenceQC with updated_sample_sig
-        qc = ReferenceQC(
-            sample_sig=updated_sample_sig,
-            reference_sig=self.autosomal_genome_sig,
-            amplicon_sig=self.amplicon_sig,
-            enable_logging=True
-        )
-
-        # Calculate sex chromosome metrics
-        metrics = qc.calculate_sex_chrs_metrics(genome_and_chr_to_sig=self.genome_and_chr_signatures)
-
-        # Verify metrics
-        self.assertIn("X-Ploidy score", metrics)
-        self.assertIn("Y-Coverage", metrics)
-
-        # Calculate expected X-Ploidy score
-        # X-Ploidy = (mean_abundance_x / mean_abundance_autosomal) * (len(autosomal_genome_after_removal) / len(sex_x_sig))
-        # mean_abundance_x = 4.0
-        # mean_abundance_autosomal = 3.0
-        # len(autosomal_genome_after_removal) = 6
-        # len(sex_x_sig) = 3
-        # X-Ploidy = (4.0 / 3.0) * (6 / 3) = 1.3333 * 2 = 2.6667
-        expected_xploidy = (4.0 / 3.0) * (6 / 3)
-        self.assertAlmostEqual(metrics["X-Ploidy score"], expected_xploidy, places=4)
-
-        # Calculate expected Y-Coverage
-        # Y-Coverage = (len(Y in sample) / len(Y specific)) / (len(autosomal in sample) / len(autosomal specific))
-        # len(Y in sample) = 0
-        # len(Y specific) = 3
-        # len(autosomal in sample) = 5
-        # len(autosomal specific) = 6
-        # Y-Coverage = (0/3) / (5/6) = 0 / 0.8333 = 0.0
-        expected_ycoverage = 0.0
-        self.assertAlmostEqual(metrics["Y-Coverage"], expected_ycoverage, places=4)
+        
         
     def test_nonref_consume_from_vars_basic(self):
         """

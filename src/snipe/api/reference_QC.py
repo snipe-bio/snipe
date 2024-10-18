@@ -1133,6 +1133,7 @@ class ReferenceQC:
         for chr_name, mean_abundance in chr_to_mean_abundance.items():
             if "sex" in chr_name.lower():
                 continue
+            self.logger.debug("Adding %s to autosomal chromosomes.", chr_name)
             autosomal_chr_to_mean_abundance[chr_name] = mean_abundance
         
         
@@ -1144,7 +1145,7 @@ class ReferenceQC:
             self.logger.debug("Calculated Autosomal CV: %f", cv)
         else:
             self.logger.warning("No autosomal chromosomes were processed. 'Autosomal_CV' set to None.")
-            self.chrs_stats.update({"Autosomal_CV": None})
+            self.sex.update({"Autosomal_CV": None})
         
         # optional return, not required
         return self.chrs_stats
@@ -1299,7 +1300,7 @@ class ReferenceQC:
         self.logger.debug("\t-Derived X chromosome-specific signature size: %d hashes.", len(specific_xchr_sig))
         
         # Intersect the sample signature with chromosome-specific signatures
-        sample_specific_xchr_sig = self.sample_sig & specific_xchr_sig
+        sample_specific_xchr_sig = self.sample_sig & specific_chr_to_sig['sex-x'] # specific_xchr_sig
         if len(sample_specific_xchr_sig) == 0:
             self.logger.warning("No X chromosome-specific k-mers found in the sample signature.")
         self.logger.debug("\t-Intersected sample signature with X chromosome-specific k-mers = %d hashes.", len(sample_specific_xchr_sig))
@@ -1315,8 +1316,7 @@ class ReferenceQC:
             self.logger.warning("Autosomal mean abundance is zero. Setting X-Ploidy score to zero to avoid division by zero.")
             xploidy_score = 0.0
         else:
-            xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) * \
-                            (len(autosomals_genome_sig) / len(specific_xchr_sig) if len(specific_xchr_sig) > 0 else 0.0)
+            xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
         
         self.logger.debug("Calculated X-Ploidy score: %.4f", xploidy_score)
         self.sex_stats.update({"X-Ploidy score": xploidy_score})

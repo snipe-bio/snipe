@@ -52,7 +52,7 @@ class SnipeSig:
             self.logger.setLevel(logging.CRITICAL)
 
         # Initialize internal variables
-        self.logger.debug("Initializing SnipeSig with sourmash_sig: %s", sourmash_sig)
+        self.logger.debug("Initializing SnipeSig with sourmash_sig")
 
         self._scale: int = None
         self._ksize: int = None
@@ -124,12 +124,12 @@ class SnipeSig:
                     elif signame.startswith("sex-"):
                         self.logger.debug("Found a sex chr signature %s", signame)
                         sig = sig.to_mutable()
-                        # sig.name = signame.replace("sex-","")
                         self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
                     elif signame.startswith("autosome-"):
                         self.logger.debug("Found an autosome signature %s", signame)
                         sig = sig.to_mutable()
-                        # sig.name = signame.replace("autosome-","")
+                        self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
+                    elif signame.startswith("mitochondrial-"):
                         self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
                     else:
                         continue
@@ -282,6 +282,14 @@ class SnipeSig:
         Set the type of the signature.
         """
         self._type = sigtype
+    
+    # setter for name
+    @name.setter
+    def name(self, name: str):
+        r"""
+        Set the name of the signature.
+        """
+        self._name = name
         
     @track_abundance.setter
     def track_abundance(self, track_abundance: bool):

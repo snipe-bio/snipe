@@ -36,13 +36,13 @@ def validate_tsv_file(ctx, param, value: str) -> str:
 @click.option('--samples-from-file', type=click.Path(exists=True), help='File containing sample paths (one per line).')
 @click.option('--amplicon', type=click.Path(exists=True), help='Amplicon signature file (optional).')
 @click.option('--roi', is_flag=True, default=False, help='Calculate ROI for 1,2,5,9 folds.')
-@click.option('--advanced', is_flag=True, default=False, help='Include advanced QC metrics.')
+@click.option('--export-var', is_flag=True, default=False, help='Export signatures for variances')
 @click.option('--ychr', type=click.Path(exists=True), help='Y chromosome signature file (overrides the reference ychr).')
 @click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
 @click.option('-o', '--output', required=True, callback=validate_tsv_file, help='Output TSV file for QC results.')
-@click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Variable signature file path. Can be used multiple times.')
+@click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Extra signature file path to study variance of non-reference k-mers.')
 def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
-       amplicon: Optional[str], roi: bool, advanced: bool, 
+       amplicon: Optional[str], roi: bool, export_var: bool, 
        ychr: Optional[str], debug: bool, output: str, vars: List[str]):
     """
         Perform quality control (QC) on multiple samples against a reference genome.
@@ -198,7 +198,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         - `--amplicon amplicon.sig`: Amplicon signature file.
         - `--sample sample1.sig`: Sample signature file.
         - `--var var1.sig` & `--var var2.sig`: Variable signature files.
-        - `--advanced`: Includes advanced QC metrics.
+        - `--export-var`: Export signatures for variances.
         - `-o qc_advanced.tsv`: Output file for QC results.
 
         **Expected Output:**
@@ -404,6 +404,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             amplicon_sig=amplicon_sig,
             ychr=ychr_sig if ychr_sig else None,
             varsigs=vars_snipesigs if vars_snipesigs else None,
+            export_varsigs=export_var,
             enable_logging=debug
         )
     
@@ -414,7 +415,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         try:
             sample_stats = qc_instance.process_sample(sample_sig=sample_sig,
                           predict_extra_folds = predict_extra_folds if roi else None,
-                          advanced=advanced)
+                          advanced=True)
             sample_to_stats[sample_sig.name] = sample_stats
         except Exception as e:
             failed_samples.append(sample_sig.name)
@@ -454,7 +455,8 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     try:
         with open(output, 'w', encoding='utf-8') as f:
             # Write comment with command invocation
-            f.write(f"# Command: {command_invocation}\n")
+            #! stop for now writing the comment
+            # f.write(f"# Command: {command_invocation}\n")
             # Write the DataFrame to the file
             df.to_csv(f, sep='\t', index=False)
         logger.info(f"QC results successfully exported to {output}")
