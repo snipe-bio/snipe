@@ -252,6 +252,7 @@ class MultiSigReferenceQC:
                  ychr: Optional[SnipeSig] = None,
                  varsigs: Optional[List[SnipeSig]] = None,
                  enable_logging: bool = False,
+                 export_varsigs: bool = False,
                  **kwargs):
         
         # Initialize logger
@@ -295,6 +296,7 @@ class MultiSigReferenceQC:
         self.specific_chr_to_sig: Optional[Dict[str, SnipeSig]] = reference_sig.chr_to_sig
         
         if ychr is not None and self.specific_chr_to_sig is not None:
+            self.logger.debug("Y chromosome signature provided and passed to the specific_kmers function.")
             self.specific_chr_to_sig['sex-y'] = ychr
         
         if self.specific_chr_to_sig is not None:
@@ -304,10 +306,10 @@ class MultiSigReferenceQC:
             self.logger.debug(f"\t-All hashes for chromosomes after getting unique sigs {len(SnipeSig.sum_signatures(list(self.specific_chr_to_sig.values())))}")
         
         # now remove the mitochondrial if present
-        if "mitochondrial-M" in self.specific_chr_to_sig:
-            self.specific_chr_to_sig.pop("mitochondrial-M")
-            self.logger.debug("Removed mitochondrial-M from specific_chr_to_sig.")
-            self.logger.debug(f"\t-All hashes for chromosomes after removing mitochondrial-M {len(SnipeSig.sum_signatures(list(self.specific_chr_to_sig.values())))}")
+        # if "mitochondrial-M" in self.specific_chr_to_sig:
+        #     self.specific_chr_to_sig.pop("mitochondrial-M")
+        #     self.logger.debug("Removed mitochondrial-M from specific_chr_to_sig.")
+        #     self.logger.debug(f"\t-All hashes for chromosomes after removing mitochondrial-M {len(SnipeSig.sum_signatures(list(self.specific_chr_to_sig.values())))}")
         
         self.variance_sigs: Optional[List[SnipeSig]] = None
         if varsigs is not None:
@@ -331,6 +333,7 @@ class MultiSigReferenceQC:
         self.reference_sig = reference_sig
         self.amplicon_sig = amplicon_sig
         self.enable_logging = enable_logging
+        self.export_varsigs = export_varsigs
         self.sample_to_stats = {}
 
 
@@ -587,12 +590,18 @@ class MultiSigReferenceQC:
                 for chr_name in sorted(chr_to_mean_abundance, key=sort_chromosomes)
             }
             
+            # Delete the mitochondrial from sorted_chr_to_mean_abundance
+            if "mitochondrial-M" in sorted_chr_to_mean_abundance:
+                self.logger.debug("Removing mitochondrial-M from sorted_chr_to_mean_abundance.")
+                sorted_chr_to_mean_abundance.pop("mitochondrial-M")
+            
             chrs_stats.update(sorted_chr_to_mean_abundance)
 
             # chr_to_mean_abundance but without any chr with partial name sex
             autosomal_chr_to_mean_abundance = {}
             for chr_name, mean_abundance in chr_to_mean_abundance.items():
-                if "sex" in chr_name.lower() or "-snipegenome" in chr_name.lower():
+                if "sex" in chr_name.lower() or "-snipegenome" in chr_name.lower() or "mitochondrial" in chr_name.lower():
+                    self.logger.debug("Skipping %s from autosomal_chr_to_mean_abundance.", chr_name)
                     continue
 
                 self.logger.debug("Adding %s to autosomal_chr_to_mean_abundance.", chr_name)
@@ -619,9 +628,8 @@ class MultiSigReferenceQC:
             self.logger.debug("Length of genome before subtracting sex chromosomes %s", len(self.reference_sig))
             autosomals_genome_sig = self.reference_sig.copy()
             for chr_name, chr_sig in self.specific_chr_to_sig.items():
-                if "sex" in chr_name.lower():
+                if "sex" in chr_name.lower() or "mitochondrial" in chr_name.lower():
                     self.logger.debug("Removing %s chromosome from the autosomal genome signature.", chr_name)
-                    self.logger.debug("Type of autosomals_genome_sig: %s | Type of chr_sig: %s", autosomals_genome_sig.sigtype, chr_sig.sigtype)
                     self.logger.debug("Length of autosomals_genome_sig: %s | Length of chr_sig: %s", len(autosomals_genome_sig), len(chr_sig))
                     autosomals_genome_sig -= chr_sig
             self.logger.debug("Length of genome after subtracting sex chromosomes %s", len(autosomals_genome_sig))
@@ -648,8 +656,6 @@ class MultiSigReferenceQC:
             # Derive the X chromosome-specific signature by subtracting autosomal genome hashes
             specific_xchr_sig = self.specific_chr_to_sig["sex-x"] - autosomals_genome_sig
             self.logger.debug("\t-Derived X chromosome-specific signature size: %d hashes.", len(specific_xchr_sig))
-            
-            autosomals_genome_sig = self.reference_sig - self.specific_chr_to_sig['sex-x']
             
             # Intersect the sample signature with chromosome-specific signatures
             sample_specific_xchr_sig = sample_sig & self.specific_chr_to_sig['sex-x']
@@ -678,9 +684,11 @@ class MultiSigReferenceQC:
                 self.logger.warning("Autosomal mean abundance is zero. Setting X-Ploidy score to zero to avoid division by zero.")
                 xploidy_score = 0.0
             else:
-                xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
-                # xploidy_score = (xchr_total_abundance / autosomal_total_abundance) * \
-                #                                 (len(autosomals_genome_sig) / len(specific_xchr_sig) if len(specific_xchr_sig) > 0 else 0.0)            
+                # xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
+                xploidy_score = (xchr_total_abundance / autosomal_total_abundance) * \
+                                                (len(autosomals_genome_sig) / len(specific_xchr_sig) if len(specific_xchr_sig) > 0 else 0.0)    
+                                                
+                # (yfree_xchr_in_sample.total_abundance / yfree_autosomals_in_sample.total_abundance) * (len(yfree_autosomals_specific) / len(yfree_xchr_specific))        
 
             self.logger.debug("Calculated X-Ploidy score: %.4f", xploidy_score)
             sex_stats.update({"X-Ploidy score": xploidy_score})
@@ -737,6 +745,15 @@ class MultiSigReferenceQC:
             for variance_sig in self.variance_sigs:
                 variance_name = variance_sig.name
                 sample_nonref_var: SnipeSig = sample_nonref & variance_sig
+                
+                if self.export_varsigs:
+                    _export_var_name = variance_name.replace(' ','_').lower()
+                    _export_sample_name = f"{sample_sig.name}_{_export_var_name}_nonref"
+                    _export_name = _export_sample_name + '_' + _export_var_name
+                    sample_nonref_var.name = _export_name
+                    self.logger.debug("Exporting non-reference k-mers from variable '%s'.", variance_name)
+                    sample_nonref_var.export(f"{sample_sig.name}_{variance_name}_nonref.zip")
+
                 sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
                 sample_nonref_var_unique_hashes = len(sample_nonref_var)
                 sample_nonref_var_coverage_index = sample_nonref_var_unique_hashes / sample_nonref_unique_hashes

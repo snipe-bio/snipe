@@ -282,6 +282,14 @@ class SnipeSig:
         Set the type of the signature.
         """
         self._type = sigtype
+    
+    # setter for name
+    @name.setter
+    def name(self, name: str):
+        r"""
+        Set the name of the signature.
+        """
+        self._name = name
         
     @track_abundance.setter
     def track_abundance(self, track_abundance: bool):
