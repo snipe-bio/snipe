@@ -717,7 +717,7 @@ class MultiSigReferenceQC:
             sample_nonref = sample_sig - self.reference_sig
 
             self.logger.debug("\t-Size of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
-            sample_nonref.trim_singletons()
+            # sample_nonref.trim_singletons()
             self.logger.debug("\t-Size of non-reference k-mers after trimming singletons: %d hashes.", len(sample_nonref))
             
             sample_nonref_unique_hashes = len(sample_nonref)
