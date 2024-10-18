@@ -669,26 +669,12 @@ class MultiSigReferenceQC:
             xchr_mean_abundance = sample_specific_xchr_sig.get_sample_stats.get("mean_abundance", 0.0)
             autosomal_mean_abundance = sample_autosomal_sig.get_sample_stats.get("mean_abundance", 0.0)
             
-            xchr_total_abundance = sample_specific_xchr_sig.get_sample_stats.get("total_abundance", 0.0)
-            autosomal_total_abundance = sample_autosomal_sig.get_sample_stats.get("total_abundance", 0.0)
-            
-            x_mean_from_total = xchr_total_abundance / len(sample_specific_xchr_sig)
-            autosomal_mean_from_total = autosomal_total_abundance / len(sample_autosomal_sig)
-            
-            # compare 
-            self.logger.debug("X chromosome mean %s | from total %s", xchr_mean_abundance, x_mean_from_total)
-            self.logger.debug("Autosomal mean %s | from total %s", autosomal_mean_abundance, autosomal_mean_from_total)
-            
             # Calculate X-Ploidy score
             if autosomal_mean_abundance == 0:
                 self.logger.warning("Autosomal mean abundance is zero. Setting X-Ploidy score to zero to avoid division by zero.")
                 xploidy_score = 0.0
             else:
-                # xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
-                xploidy_score = (xchr_total_abundance / autosomal_total_abundance) * \
-                                                (len(autosomals_genome_sig) / len(specific_xchr_sig) if len(specific_xchr_sig) > 0 else 0.0)    
-                                                
-                # (yfree_xchr_in_sample.total_abundance / yfree_autosomals_in_sample.total_abundance) * (len(yfree_autosomals_specific) / len(yfree_xchr_specific))        
+                xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
 
             self.logger.debug("Calculated X-Ploidy score: %.4f", xploidy_score)
             sex_stats.update({"X-Ploidy score": xploidy_score})
