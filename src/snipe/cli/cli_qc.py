@@ -553,13 +553,25 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
             # Map each chunk to the process_subset function
             futures = {executor.submit(process_subset, *args): idx for idx, args in enumerate(worker_args)}
-            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples in parallel"):
-                try:
-                    subset_stats, subset_failed = future.result()
-                    sample_to_stats.update(subset_stats)
-                    failed_samples.extend(subset_failed)
-                except Exception as e:
-                    logger.error(f"A worker failed with exception: {e}")
+            # Initialize tqdm with total number of samples
+            with tqdm(total=len(valid_samples), desc="Processing samples in parallel") as pbar:
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        subset_stats, subset_failed = future.result()
+                        sample_to_stats.update(subset_stats)
+                        failed_samples.extend(subset_failed)
+                        # Update the progress bar by the number of samples processed in this subset
+                        processed_count = len(subset_stats) + len(subset_failed)
+                        pbar.update(processed_count)
+                    except Exception as e:
+                        logger.error(f"A worker failed with exception: {e}")
+                        # Retrieve the subset that caused the exception
+                        subset_idx = futures[future]
+                        subset = worker_args[subset_idx][0]
+                        # Update the progress bar by the number of samples in the failed subset
+                        pbar.update(len(subset))
+                        failed_samples.extend(subset)
+                        continue
     else:
         logger.info("Parallel processing not enabled. Processing samples sequentially.")
         # Sequential processing as original
@@ -572,19 +584,21 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                 enable_logging=debug
             )
         
-        for sample_path in tqdm(valid_samples, desc="Processing samples"):
-            sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
-            try:
-                sample_stats = qc_instance.process_sample(
-                    sample_sig=sample_sig,
-                    predict_extra_folds=predict_extra_folds if roi else None,
-                    advanced=True
-                )
-                sample_to_stats[sample_sig.name] = sample_stats
-            except Exception as e:
-                failed_samples.append(sample_sig.name)
-                qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
-                continue
+        with tqdm(total=len(valid_samples), desc="Processing samples") as pbar:
+            for sample_path in valid_samples:
+                sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+                try:
+                    sample_stats = qc_instance.process_sample(
+                        sample_sig=sample_sig,
+                        predict_extra_folds=predict_extra_folds if roi else None,
+                        advanced=True
+                    )
+                    sample_to_stats[sample_sig.name] = sample_stats
+                except Exception as e:
+                    failed_samples.append(sample_sig.name)
+                    qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
+                finally:
+                    pbar.update(1)
 
     # Separate successful and failed results
     succeeded = list(sample_to_stats.keys())
