@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import logging
-from typing import Optional, Any, List, Dict, Set, Union
+from typing import Optional, Any, List, Dict, Set, Union, Tuple
 
 import click
 import pandas as pd
@@ -30,6 +30,133 @@ def validate_tsv_file(ctx, param, value: str) -> str:
     return value
 
 
+def split_chunks(lst: List[str], n: int) -> List[List[str]]:
+    """Splits the list `lst` into `n` nearly equal chunks."""
+    k, m = divmod(len(lst), n)
+    return [lst[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n)]
+
+
+def process_subset(
+    subset: List[str],
+    ref: str,
+    amplicon: Optional[str],
+    ychr: Optional[str],
+    vars: List[str],
+    export_var: bool,
+    roi: bool,
+    debug: bool
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Worker function to process a subset of samples.
+    
+    Args:
+        subset (List[str]): List of sample file paths to process.
+        ref (str): Reference signature file path.
+        amplicon (Optional[str]): Amplicon signature file path.
+        ychr (Optional[str]): Y chromosome signature file path.
+        vars (List[str]): List of variable signature file paths.
+        export_var (bool): Flag to export variable signatures.
+        roi (bool): Flag to calculate ROI.
+        debug (bool): Flag to enable debug logging.
+    
+    Returns:
+        Tuple[Dict[str, Any], List[str]]: A tuple containing:
+            - A dictionary mapping sample names to their QC statistics.
+            - A list of sample names that failed to process.
+    """
+    # Configure logging for the worker
+    subset_logger = logging.getLogger('snipe_qc_worker')
+    subset_logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    if not subset_logger.hasHandlers():
+        subset_logger.addHandler(handler)
+    
+    subset_logger.debug(f"Worker started with {len(subset)} samples.")
+    
+    # Load reference signature
+    try:
+        reference_sig = SnipeSig(sourmash_sig=ref, sig_type=SigType.GENOME, enable_logging=debug)
+        subset_logger.debug(f"Loaded reference signature: {reference_sig.name}")
+    except Exception as e:
+        subset_logger.error(f"Failed to load reference signature from {ref}: {e}")
+        return {}, subset  # All samples in this subset fail
+    
+    # Load amplicon signature if provided
+    amplicon_sig = None
+    if amplicon:
+        try:
+            amplicon_sig = SnipeSig(sourmash_sig=amplicon, sig_type=SigType.AMPLICON, enable_logging=debug)
+            subset_logger.debug(f"Loaded amplicon signature: {amplicon_sig.name}")
+        except Exception as e:
+            subset_logger.error(f"Failed to load amplicon signature from {amplicon}: {e}")
+            return {}, subset  # All samples in this subset fail
+    
+    # Load Y chromosome signature if provided
+    ychr_sig = None
+    if ychr:
+        try:
+            ychr_sig = SnipeSig(sourmash_sig=ychr, sig_type=SigType.GENOME, enable_logging=debug)
+            subset_logger.debug(f"Loaded Y chromosome signature: {ychr_sig.name}")
+        except Exception as e:
+            subset_logger.error(f"Failed to load Y chromosome signature from {ychr}: {e}")
+            return {}, subset  # All samples in this subset fail
+    
+    # Load variable signatures if provided
+    vars_snipesigs = []
+    if vars:
+        subset_logger.info(f"Loading {len(vars)} variable signature(s).")
+        for path in vars:
+            if not os.path.exists(path):
+                subset_logger.error(f"Variable signature file does not exist: {path}")
+                return {}, subset  # All samples in this subset fail
+            try:
+                var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
+                vars_snipesigs.append(var_sig)
+                subset_logger.debug(f"Loaded variable signature: {var_sig.name}")
+            except Exception as e:
+                subset_logger.error(f"Failed to load variable signature from {path}: {e}")
+                return {}, subset  # All samples in this subset fail
+    
+    # Initialize QC instance
+    try:
+        qc_inst = MultiSigReferenceQC(
+            reference_sig=reference_sig,
+            amplicon_sig=amplicon_sig,
+            ychr=ychr_sig if ychr_sig else None,
+            varsigs=vars_snipesigs if vars_snipesigs else None,
+            export_varsigs=export_var,
+            enable_logging=debug
+        )
+    except Exception as e:
+        subset_logger.error(f"Failed to initialize MultiSigReferenceQC: {e}")
+        return {}, subset  # All samples in this subset fail
+    
+    predict_extra_folds = [1, 2, 5, 9]
+    
+    subset_stats = {}
+    subset_failed = []
+    for sample_path in subset:
+        sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+        try:
+            sample_stats = qc_inst.process_sample(
+                sample_sig=sample_sig,
+                predict_extra_folds=predict_extra_folds if roi else None,
+                advanced=True
+            )
+            subset_stats[sample_sig.name] = sample_stats
+            subset_logger.debug(f"Successfully processed sample: {sample_sig.name}")
+        except Exception as e:
+            subset_failed.append(sample_sig.name)
+            subset_logger.error(f"Failed to process sample {sample_sig.name}: {e}")
+            continue
+    
+    subset_logger.debug(f"Worker completed. Success: {len(subset_stats)}, Failed: {len(subset_failed)}")
+    return subset_stats, subset_failed
+
+
 @click.command()
 @click.option('--ref', type=click.Path(exists=True), required=True, help='Reference genome signature file (required).')
 @click.option('--sample', type=click.Path(exists=True), callback=validate_sig_input, multiple=True, default = None, help='Sample signature file. Can be provided multiple times.')
@@ -41,9 +168,10 @@ def validate_tsv_file(ctx, param, value: str) -> str:
 @click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
 @click.option('-o', '--output', required=True, callback=validate_tsv_file, help='Output TSV file for QC results.')
 @click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Extra signature file path to study variance of non-reference k-mers.')
+@click.option('-c', '--cores', type=int, default=1, show_default=True, help='Number of CPU cores to use for parallel processing.')
 def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
        amplicon: Optional[str], roi: bool, export_var: bool, 
-       ychr: Optional[str], debug: bool, output: str, vars: List[str]):
+       ychr: Optional[str], debug: bool, output: str, vars: List[str], cores: int):
     """
         Perform quality control (QC) on multiple samples against a reference genome.
 
@@ -296,7 +424,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         A TSV file named `qc_comprehensive.tsv` containing comprehensive QC metrics, including advanced analyses, ROI predictions, and data from amplicon and variable signatures for both `sample1.sig` and `sample2.sig`.
     """
     
-    print(sample)
+
     
     start_time = time.time()
 
@@ -318,7 +446,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         for _sample in sample:
             logger.debug(f"Adding sample from command-line: {_sample}")
             samples_set.add(_sample)
-            
+                
 
     if samples_from_file:
         logger.debug(f"Reading samples from file: {samples_from_file}")
@@ -392,37 +520,72 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                 logger.debug(f"Loaded variable signature: {var_sig.name}")
             except Exception as e:
                 logger.error(f"Failed to load variable signature from {path}: {e}")
-                
+                    
         logger.debug(f"Variable signature paths: {vars_paths}")
-        
+            
 
     predict_extra_folds = [1, 2, 5, 9]
     
-    
-    qc_instance = MultiSigReferenceQC(
-            reference_sig=reference_sig,
-            amplicon_sig=amplicon_sig,
-            ychr=ychr_sig if ychr_sig else None,
-            varsigs=vars_snipesigs if vars_snipesigs else None,
-            export_varsigs=export_var,
-            enable_logging=debug
-        )
-    
     sample_to_stats = {}
     failed_samples = []
-    for sample_path in tqdm(valid_samples):
-        sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
-        try:
-            sample_stats = qc_instance.process_sample(sample_sig=sample_sig,
-                          predict_extra_folds = predict_extra_folds if roi else None,
-                          advanced=True)
-            sample_to_stats[sample_sig.name] = sample_stats
-        except Exception as e:
-            failed_samples.append(sample_sig.name)
-            qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
-            continue
-    
-    
+
+    if cores > 1 and len(valid_samples) > 1:
+        logger.info(f"Parallel processing enabled with {cores} cores.")
+        # Split valid_samples into chunks
+        chunks = split_chunks(valid_samples, cores)
+        logger.debug(f"Splitting samples into {len(chunks)} chunks for parallel processing.")
+
+        # Prepare arguments for each worker
+        worker_args = [
+            (
+                chunk,
+                ref,
+                amplicon,
+                ychr,
+                vars,
+                export_var,
+                roi,
+                debug
+            )
+            for chunk in chunks
+        ]
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
+            # Map each chunk to the process_subset function
+            futures = {executor.submit(process_subset, *args): idx for idx, args in enumerate(worker_args)}
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing samples in parallel"):
+                try:
+                    subset_stats, subset_failed = future.result()
+                    sample_to_stats.update(subset_stats)
+                    failed_samples.extend(subset_failed)
+                except Exception as e:
+                    logger.error(f"A worker failed with exception: {e}")
+    else:
+        logger.info("Parallel processing not enabled. Processing samples sequentially.")
+        # Sequential processing as original
+        qc_instance = MultiSigReferenceQC(
+                reference_sig=reference_sig,
+                amplicon_sig=amplicon_sig,
+                ychr=ychr_sig if ychr_sig else None,
+                varsigs=vars_snipesigs if vars_snipesigs else None,
+                export_varsigs=export_var,
+                enable_logging=debug
+            )
+        
+        for sample_path in tqdm(valid_samples, desc="Processing samples"):
+            sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+            try:
+                sample_stats = qc_instance.process_sample(
+                    sample_sig=sample_sig,
+                    predict_extra_folds=predict_extra_folds if roi else None,
+                    advanced=True
+                )
+                sample_to_stats[sample_sig.name] = sample_stats
+            except Exception as e:
+                failed_samples.append(sample_sig.name)
+                qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
+                continue
+
     # Separate successful and failed results
     succeeded = list(sample_to_stats.keys())
     failed = len(failed_samples)
@@ -455,7 +618,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     try:
         with open(output, 'w', encoding='utf-8') as f:
             # Write comment with command invocation
-            #! stop for now writing the comment
             # f.write(f"# Command: {command_invocation}\n")
             # Write the DataFrame to the file
             df.to_csv(f, sep='\t', index=False)
@@ -466,7 +628,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
 
     # Report failed samples if any
     if failed:
-        failed_samples = [res['sample'] for res in failed]
         logger.warning(f"The following {len(failed_samples)} sample(s) failed during QC processing:")
         for sample in failed_samples:
             logger.warning(f"- {sample}")
