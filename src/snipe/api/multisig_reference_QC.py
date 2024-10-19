@@ -481,7 +481,7 @@ class MultiSigReferenceQC:
         else:
             self.logger.debug("No amplicon signature provided.")
         
-        # ============= Contaminatino/Error STATS =============
+        # ============= Contamination/Error STATS =============
         
         self.logger.debug("Calculuating error and contamination indices.")
         try:
@@ -612,13 +612,11 @@ class MultiSigReferenceQC:
             if autosomal_chr_to_mean_abundance:
                 mean_abundances = np.array(list(autosomal_chr_to_mean_abundance.values()), dtype=np.float64)
                 cv = np.std(mean_abundances) / np.mean(mean_abundances) if np.mean(mean_abundances) != 0 else 0.0
-                chrs_stats.update({"Autosomal_CV": cv})
-                assert "Autosomal_CV" in chrs_stats
+                chrs_stats.update({"Autosomal k-mer mean abundance CV": cv})
                 self.logger.debug("Calculated Autosomal CV: %f", cv)
             else:
                 self.logger.warning("No autosomal chromosomes were processed. 'Autosomal_CV' set to None.")
-                chrs_stats.update({"Autosomal_CV": None})
-                assert "Autosomal_CV" in chrs_stats
+                chrs_stats.update({"Autosomal k-mer mean abundance CV": None})
                 
             
             # ============= SEX STATS =============
@@ -635,7 +633,7 @@ class MultiSigReferenceQC:
             self.logger.debug("Length of genome after subtracting sex chromosomes %s", len(autosomals_genome_sig))
             
             if 'sex-x' not in self.specific_chr_to_sig:
-                self.logger.warning("Chromosome X ('sex-x') not found in the provided signatures. X-Ploidy score will be set to zero.")
+                self.logger.warning("Chromosome X ('sex-x') not found in the provided signatures. chrX Ploidy score will be set to zero.")
                 # set sex-x to an empty signature
                 self.specific_chr_to_sig['sex-x'] = SnipeSig.create_from_hashes_abundances(
                     hashes=np.array([], dtype=np.uint64),
@@ -669,20 +667,20 @@ class MultiSigReferenceQC:
             xchr_mean_abundance = sample_specific_xchr_sig.get_sample_stats.get("mean_abundance", 0.0)
             autosomal_mean_abundance = sample_autosomal_sig.get_sample_stats.get("mean_abundance", 0.0)
             
-            # Calculate X-Ploidy score
+            # Calculate chrX Ploidy score
             if autosomal_mean_abundance == 0:
-                self.logger.warning("Autosomal mean abundance is zero. Setting X-Ploidy score to zero to avoid division by zero.")
+                self.logger.warning("Autosomal mean abundance is zero. Setting chrX Ploidy score to zero to avoid division by zero.")
                 xploidy_score = 0.0
             else:
                 xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
 
-            self.logger.debug("Calculated X-Ploidy score: %.4f", xploidy_score)
-            sex_stats.update({"X-Ploidy score": xploidy_score})
-            self.logger.debug("X-Ploidy score: %.4f", sex_stats["X-Ploidy score"])
+            self.logger.debug("Calculated chrX Ploidy score: %.4f", xploidy_score)
+            sex_stats.update({"chrX Ploidy score": xploidy_score})
+            self.logger.debug("chrX Ploidy score: %.4f", sex_stats["chrX Ploidy score"])
             
-            # Calculate Y-Coverage if Y chromosome is present
+            # Calculate chrY Coverage score if Y chromosome is present
             if 'sex-y' in self.specific_chr_to_sig and 'sex-x' in self.specific_chr_to_sig:
-                self.logger.debug("Calculating Y-Coverage based on Y chromosome-specific k-mers.")
+                self.logger.debug("Calculating chrY Coverage score based on Y chromosome-specific k-mers.")
                 
                 # Derive Y chromosome-specific k-mers by excluding autosomal and X chromosome k-mers
                 ychr_specific_kmers = self.specific_chr_to_sig["sex-y"] - autosomals_genome_sig - specific_xchr_sig
@@ -697,17 +695,17 @@ class MultiSigReferenceQC:
                 # Derive autosomal-specific k-mers by excluding X and Y chromosome k-mers from the reference signature
                 autosomals_specific_kmers = self.reference_sig - self.specific_chr_to_sig["sex-x"] - self.specific_chr_to_sig['sex-y']
                 
-                # Calculate Y-Coverage metric
+                # Calculate chrY Coverage score metric
                 if len(ychr_specific_kmers) == 0 or len(autosomals_specific_kmers) == 0:
-                    self.logger.warning("Insufficient k-mers for Y-Coverage calculation. Setting Y-Coverage to zero.")
+                    self.logger.warning("Insufficient k-mers for chrY Coverage score calculation. Setting chrY Coverage score to zero.")
                     ycoverage = 0.0
                 else:
                     ycoverage = (len(ychr_in_sample) / len(ychr_specific_kmers)) / (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
                 
-                self.logger.debug("Calculated Y-Coverage: %.4f", ycoverage)
-                sex_stats.update({"Y-Coverage": ycoverage})
+                self.logger.debug("Calculated chrY Coverage score: %.4f", ycoverage)
+                sex_stats.update({"chrY Coverage score": ycoverage})
             else:
-                self.logger.warning("No Y chromosome-specific signature detected. Y-Coverage will be set to zero.")
+                self.logger.warning("No Y chromosome-specific signature detected. chrY Coverage score will be set to zero.")
                 
         # ============= VARS NONREF STATS =============
         if self.variance_sigs:
@@ -746,6 +744,7 @@ class MultiSigReferenceQC:
                 vars_nonref_stats.update({
                     f"{variance_name} total k-mer abundance": sample_nonref_var_total_abundance,
                     f"{variance_name} mean abundance": sample_nonref.mean_abundance,
+                    f"{variance_name} median abundance": sample_nonref.median_abundance,
                     f"{variance_name} fraction of total abundance": sample_nonref_var_fraction_total
                 })
                 
@@ -755,6 +754,7 @@ class MultiSigReferenceQC:
                 
             vars_nonref_stats["unexplained variance total abundance"] = sample_nonref.total_abundance
             vars_nonref_stats["unexplained variance mean abundance"] = sample_nonref.mean_abundance
+            vars_nonref_stats["unexplained variance median abundance"] = sample_nonref.median_abundance
             vars_nonref_stats["unexplained variance fraction of total abundance"] = sample_nonref.total_abundance / sample_nonref_total_abundance if sample_nonref_total_abundance > 0 else 0.0
             
             self.logger.debug(
