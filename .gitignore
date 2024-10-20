@@ -166,3 +166,4 @@ playground/
 docs/site/*
 docs/site/
 *whl
+bioconda-recipes/

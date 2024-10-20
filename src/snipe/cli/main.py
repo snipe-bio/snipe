@@ -39,7 +39,7 @@ def cli():
 
 
 cli.add_command(cli_qc)
-cli.add_command(parallel_qc)
+# cli.add_command(parallel_qc)
 cli.add_command(cli_sketch)
 cli.add_command(cli_ops)
 
