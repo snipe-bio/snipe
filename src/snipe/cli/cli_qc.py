@@ -54,8 +54,8 @@ def process_subset(
         ref (str): Reference signature file path.
         amplicon (Optional[str]): Amplicon signature file path.
         ychr (Optional[str]): Y chromosome signature file path.
-        vars (List[str]): List of variable signature file paths.
-        export_var (bool): Flag to export variable signatures.
+        vars (List[str]): List of variance signature file paths.
+        export_var (bool): Flag to export variance signatures.
         roi (bool): Flag to calculate ROI.
         debug (bool): Flag to enable debug logging.
     
@@ -104,20 +104,20 @@ def process_subset(
             subset_logger.error(f"Failed to load Y chromosome signature from {ychr}: {e}")
             return {}, subset  # All samples in this subset fail
     
-    # Load variable signatures if provided
+    # Load variance signatures if provided
     vars_snipesigs = []
     if vars:
-        subset_logger.info(f"Loading {len(vars)} variable signature(s).")
+        subset_logger.info(f"Loading {len(vars)} variance signature(s).")
         for path in vars:
             if not os.path.exists(path):
-                subset_logger.error(f"Variable signature file does not exist: {path}")
+                subset_logger.error(f"Variance signature file does not exist: {path}")
                 return {}, subset  # All samples in this subset fail
             try:
                 var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
                 vars_snipesigs.append(var_sig)
-                subset_logger.debug(f"Loaded variable signature: {var_sig.name}")
+                subset_logger.debug(f"Loaded variance signature: {var_sig.name}")
             except Exception as e:
-                subset_logger.error(f"Failed to load variable signature from {path}: {e}")
+                subset_logger.error(f"Failed to load variance signature from {path}: {e}")
                 return {}, subset  # All samples in this subset fail
     
     # Initialize QC instance
@@ -146,6 +146,8 @@ def process_subset(
                 predict_extra_folds=predict_extra_folds if roi else None,
                 advanced=True
             )
+            #! override the internal sig file path with the actual used file path.
+            sample_stats["file_path"] =  sample_path
             subset_stats[sample_sig.name] = sample_stats
             subset_logger.debug(f"Successfully processed sample: {sample_sig.name}")
         except Exception as e:
@@ -159,7 +161,7 @@ def process_subset(
 
 @click.command()
 @click.option('--ref', type=click.Path(exists=True), required=True, help='Reference genome signature file (required).')
-@click.option('--sample', type=click.Path(exists=True), callback=validate_sig_input, multiple=True, default = None, help='Sample signature file. Can be provided multiple times.')
+@click.option('--sample', type=click.Path(exists=True), callback=validate_sig_input, multiple=True, default=None, help='Sample signature file. Can be provided multiple times.')
 @click.option('--samples-from-file', type=click.Path(exists=True), help='File containing sample paths (one per line).')
 @click.option('--amplicon', type=click.Path(exists=True), help='Amplicon signature file (optional).')
 @click.option('--roi', is_flag=True, default=False, help='Calculate ROI for 1,2,5,9 folds.')
@@ -169,9 +171,13 @@ def process_subset(
 @click.option('-o', '--output', required=True, callback=validate_tsv_file, help='Output TSV file for QC results.')
 @click.option('--var', 'vars', multiple=True, type=click.Path(exists=True), help='Extra signature file path to study variance of non-reference k-mers.')
 @click.option('-c', '--cores', type=int, default=1, show_default=True, help='Number of CPU cores to use for parallel processing.')
+@click.option('--metadata', type=str, default=None, help='Additional metadata in the format colname=value,colname=value,...')
+@click.option('--metadata-from-file', type=click.Path(exists=True), help='File containing metadata information in TSV or CSV format.')
 def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
-       amplicon: Optional[str], roi: bool, export_var: bool, 
-       ychr: Optional[str], debug: bool, output: str, vars: List[str], cores: int):
+       amplicon: Optional[str], roi: bool, export_var: bool,
+       ychr: Optional[str], debug: bool, output: str, vars: List[str], cores: int,
+       metadata: Optional[str], metadata_from_file: Optional[str]):
+
     """
         Perform quality control (QC) on multiple samples against a reference genome.
 
@@ -200,9 +206,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         - `--roi`  
         Calculate ROI for 1x, 2x, 5x, and 9x coverage folds.
 
-        - `--advanced`  
-        Include advanced QC metrics.
-
         - `--ychr PATH`  
         Y chromosome signature file (overrides the reference ychr).
 
@@ -213,7 +216,19 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         Output TSV file for QC results.
 
         - `--var PATH`  
-        Variable signature file path. Can be used multiple times.
+        Variance signature file path. Can be used multiple times.
+        
+        - `--export-var`
+        Export signatures for sample hashes found in the variance signature.
+        
+        - `-c`, `--cores INT`
+        Number of CPU cores to use for parallel processing. Default: 1.
+        
+        - `--metadata STR`
+        Additional metadata in the format `colname=value,colname=value,...`. Applies to all samples.
+        
+        - `--metadata-from-file PATH`
+        File containing metadata information in TSV or CSV format.  Each row should have `sample_path,metadata_col,value`.
 
         ## Examples
 
@@ -249,7 +264,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         snipe qc --ref reference.sig --sample sample1.sig --advanced --roi -o qc_results.tsv
         ```
 
-        ### Using Multiple Variable Signatures
+        ### Using Multiple Variance Signatures
 
         ```bash
         snipe qc --ref reference.sig --sample sample1.sig --var var1.sig --var var2.sig -o qc_results.tsv
@@ -310,9 +325,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
 
         A TSV file named `qc_roi.tsv` containing QC metrics along with ROI predictions for `sample1.sig` and `sample2.sig`.
 
-        ### Use Case 3: Advanced QC with Amplicon and Variable Signatures
+        ### Use Case 3: Advanced QC with Amplicon and Variance Signatures
 
-        **Objective:** Perform advanced QC on a sample using an amplicon signature and multiple variable signatures.
+        **Objective:** Perform advanced QC on a sample using an amplicon signature and multiple variance signatures.
 
         **Command:**
 
@@ -325,13 +340,15 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         - `--ref reference.sig`: Reference genome signature file.
         - `--amplicon amplicon.sig`: Amplicon signature file.
         - `--sample sample1.sig`: Sample signature file.
-        - `--var var1.sig` & `--var var2.sig`: Variable signature files.
+        - `--var var1.sig` & `--var var2.sig`: Variance signature files.
         - `--export-var`: Export signatures for variances.
+        - `--metadata`: Additional metadata in the format `metadata1=value,metadata2=value,...`.
+        - `--metadata-from-file`: File containing metadata information in TSV or CSV format per signature.
         - `-o qc_advanced.tsv`: Output file for QC results.
 
         **Expected Output:**
 
-        A TSV file named `qc_advanced.tsv` containing comprehensive QC metrics, including advanced metrics and analyses based on the amplicon and variable signatures for `sample1.sig`.
+        A TSV file named `qc_advanced.tsv` containing comprehensive QC metrics, including advanced metrics and analyses based on the amplicon and variance signatures for `sample1.sig`.
 
         ### Use Case 4: Overwriting Existing Output File
 
@@ -414,18 +431,17 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         - `--ref reference.zip`: Reference genome signature file.
         - `--sample sample1.zip` & `--sample sample2.sig`: Multiple sample signature files.
         - `--amplicon amplicon.zip`: Amplicon signature file.
-        - `--var var1.zip` & `--var var2.zip`: Variable signature files.
+        - `--var var1.zip` & `--var var2.zip`: Variance signature files.
         - `--advanced`: Includes advanced QC metrics.
         - `--roi`: Enables ROI calculations.
         - `-o qc_comprehensive.tsv`: Output file for QC results.
 
         **Expected Output:**
 
-        A TSV file named `qc_comprehensive.tsv` containing comprehensive QC metrics, including advanced analyses, ROI predictions, and data from amplicon and variable signatures for both `sample1.sig` and `sample2.sig`.
+        A TSV file named `qc_comprehensive.tsv` containing comprehensive QC metrics, including advanced analyses, ROI predictions, and data from amplicon and variance signatures for both `sample1.sig` and `sample2.sig`.
     """
     
 
-    
     start_time = time.time()
 
     # Configure logging
@@ -504,24 +520,24 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             logger.error(f"Failed to load Y chromosome signature from {ychr}: {e}")
             sys.exit(1)
 
-    # Prepare variable signatures if provided
+    # Prepare variance signatures if provided
     vars_paths = []
     vars_snipesigs = []
     if vars:
-        logger.info(f"Loading {len(vars)} variable signature(s).")
+        logger.info(f"Loading {len(vars)} variance signature(s).")
         for path in vars:
             if not os.path.exists(path):
-                logger.error(f"Variable signature file does not exist: {path}")
+                logger.error(f"Variance signature file does not exist: {path}")
                 sys.exit(1)
             vars_paths.append(os.path.abspath(path))
             try:
                 var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
                 vars_snipesigs.append(var_sig)
-                logger.debug(f"Loaded variable signature: {var_sig.name}")
+                logger.debug(f"Loaded variance signature: {var_sig.name}")
             except Exception as e:
-                logger.error(f"Failed to load variable signature from {path}: {e}")
+                logger.error(f"Failed to load variance signature from {path}: {e}")
                     
-        logger.debug(f"Variable signature paths: {vars_paths}")
+        logger.debug(f"Variance signature paths: {vars_paths}")
             
 
     predict_extra_folds = [1, 2, 5, 9]
@@ -608,7 +624,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     if len(succeeded) == 0:
         logger.error("All samples failed during QC processing. Output TSV will not be generated.")
         sys.exit(1)
-        
+
     # write total success and failure
     logger.info("Successfully processed samples: %d", len(succeeded))
 
@@ -627,6 +643,64 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             cols.remove(col)
     reordered_cols += cols
     df = df[reordered_cols]
+
+    # Process --metadata option
+    metadata_dict = {}
+    if metadata:
+        try:
+            for item in metadata.split(','):
+                key, value = item.split('=', 1)
+                metadata_dict[key.strip()] = value.strip()
+            logger.debug(f"Parsed metadata from command line: {metadata_dict}")
+        except Exception as e:
+            logger.error(f"Failed to parse --metadata: {e}")
+            sys.exit(1)
+
+    # Process --metadata-from-file option
+    if metadata_from_file:
+        if not os.path.exists(metadata_from_file):
+            logger.error(f"Metadata file does not exist: {metadata_from_file}")
+            sys.exit(1)
+        try:
+            # Read metadata file
+            metadata_df = pd.read_csv(metadata_from_file, sep=None, engine='python', header=None)
+            # Validate columns
+            if metadata_df.shape[1] != 3:
+                logger.error("Metadata file must have three columns: sample_path, metadata_col, value")
+                sys.exit(1)
+            metadata_samples = metadata_df.iloc[:, 0].tolist()
+            metadata_cols = metadata_df.iloc[:, 1].tolist()
+            metadata_values = metadata_df.iloc[:, 2].tolist()
+            # Build a nested dictionary: {sample_name: {col1: val1, col2: val2, ...}}
+            metadata_sample_dict = {}
+            for sample_path, col_name, value in zip(metadata_samples, metadata_cols, metadata_values):
+                sample_basename = os.path.basename(sample_path)
+                if sample_basename not in metadata_sample_dict:
+                    metadata_sample_dict[sample_basename] = {}
+                metadata_sample_dict[sample_basename][col_name] = value
+            logger.debug(f"Parsed metadata from file: {metadata_sample_dict}")
+        except Exception as e:
+            logger.error(f"Failed to read or parse metadata file {metadata_from_file}: {e}")
+            sys.exit(1)
+    else:
+        metadata_sample_dict = {}
+
+    # Apply metadata to DataFrame
+    if metadata_dict:
+        # Apply global metadata to all samples
+        for key, value in metadata_dict.items():
+            df[key] = value
+
+    if metadata_sample_dict:
+        # Apply per-sample metadata
+        df["tmp_basename"] = df["filename"].apply(os.path.basename)
+        # df.set_index("tmp_basename", inplace=True)
+        # map metadata to samples
+        for sample_basename, metadata_dict in metadata_sample_dict.items():
+            for key, value in metadata_dict.items():
+                df.loc[df["tmp_basename"] == sample_basename, key] = value
+        # df.reset_index(inplace=True)
+        df.drop(columns=["tmp_basename"], inplace=True)
 
     # Export to TSV with comments
     try:
