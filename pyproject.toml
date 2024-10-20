@@ -4,7 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "snipe"
-version = "0.1.0"
+dynamic = [
+    "version",
+]
 description = "A versatile API and CLI tool for Snipe."
 readme = "README.md"
 license = { text = "AGPL" }
@@ -63,7 +65,7 @@ snipe = "snipe.cli.main:cli"
 
 
 [tool.hatch.version]
-path = "snipe/__init__.py"
+path = "src/snipe/__init__.py"
 
 [tool.hatch.envs.hatch-build]
 installer = "uv"
