@@ -29,7 +29,7 @@ jobs:
         run: |
             VERSION=$(python -c "import re; 
             import pathlib; 
-            init_file = pathlib.Path('snipe/__init__.py'); 
+            init_file = pathlib.Path('src/snipe/__init__.py'); 
             content = init_file.read_text(); 
             match = re.search(r'__version__\s*=\s*[\'\"]([^\'\"]+)[\'\"]', content); 
             print(match.group(1) if match else '0.0.0')")
