@@ -754,7 +754,7 @@ class MultiSigReferenceQC:
                 if self.export_varsigs:
                     __sample_name = sample_sig.name.replace(' ','_').lower()
                     __var_name = variance_name.replace(' ','_').lower()
-                    __filename = os.basename(f"{__sample_name}_{__var_name}_nonref.zip".strip())
+                    __filename = os.path.basename(f"{__sample_name}_{__var_name}_nonref.zip".strip())
                     self.logger.debug("Exporting non-reference k-mers from variable '%s'.", __filename)
                     var_export_file_path = sample_nonref_var.export(__filename)
                     sample_nonref_var.export(var_export_file_path)
