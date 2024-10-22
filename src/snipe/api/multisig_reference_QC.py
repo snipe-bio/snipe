@@ -7,7 +7,6 @@ from scipy.optimize import OptimizeWarning, curve_fit
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.enums import SigType
 import os
-from typing import Optional
 from snipe.api.reference_QC import ReferenceQC
 
 # pylint disable C0301
