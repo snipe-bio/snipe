@@ -204,11 +204,11 @@ def process_subset(
     subset_failed = []
     for sample_path in subset:
         sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
-        if len(sample_sig.name) == 0:
-            # warn and set to basename without extension
+        subset_logger.debug(f"DELME Processing sample: {sample_sig.name}")
+        if sample_sig.name == "":
             _newname = os.path.basename(sample_path).split('.')[0]
-            subset_logger.warning(f"Sample name is empty. Setting to: {_newname}")
-
+            sample_sig.name = _newname
+            subset_logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
             
         try:
             sample_stats = qc_inst.process_sample(
@@ -678,6 +678,12 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         with tqdm(total=len(valid_samples), desc="Processing samples") as pbar:
             for sample_path in valid_samples:
                 sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+                qc_instance.logger.debug(f"DELME Processing sample: {sample_sig.name}")
+                if sample_sig.name == "":
+                    _newname = os.path.basename(sample_path).split('.')[0]
+                    sample_sig.name = _newname
+                    qc_instance.logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
+                
                 try:
                     sample_stats = qc_instance.process_sample(
                         sample_sig=sample_sig,
@@ -819,6 +825,12 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     metadata_str, metadata_md5sum = METADATA.export_and_verify_metadata(
         metadata=export_metadata
     )
+    
+    # santize file_path and filename
+    df["filename"] = df["file_path"].apply(os.path.basename)
+    # drop file_path
+    df.drop(columns=["file_path"], inplace=True)
+    
 
     try:
         with open(output, 'w', encoding='utf-8') as f:

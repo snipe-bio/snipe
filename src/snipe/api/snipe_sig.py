@@ -110,6 +110,13 @@ class SnipeSig:
             else:
                 self.logger.debug("No signature found in the input. Expected a single sample signature.")
                 raise ValueError("No signature found in the input. Expected a single sample signature.")
+
+            if sig_type == SigType.AMPLICON:
+                for signame in sourmash_sigs.keys():
+                    if signame == '-' or signame == '':
+                        _emsg = "Amplicon signature must have a name!"
+                        self.logger.error(_emsg)
+                        raise ValueError(_emsg)
             
         elif sig_type == SigType.GENOME:
             if len(sourmash_sigs) > 1:
@@ -131,6 +138,10 @@ class SnipeSig:
                         self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
                     elif signame.startswith("mitochondrial-"):
                         self.chr_to_sig[sig.name] = SnipeSig(sourmash_sig=sig, sig_type=SigType.AMPLICON, enable_logging=enable_logging)
+                    elif signame == '-' or signame == '':
+                        _emsg = "Reference signature must have a name!"
+                        self.logger.error(_emsg)
+                        raise ValueError(_emsg)
                     else:
                         continue
                 else:
@@ -143,14 +154,21 @@ class SnipeSig:
         else:
             self.logger.debug("Unknown sigtype: %s", sig_type)
             raise ValueError(f"Unknown sigtype: {sig_type}")
-                
+        
+        _sourmash_sig_name = _sourmash_sig.name
+        if _sourmash_sig_name == '-':
+            _sourmash_sig_name = ''
+
         self.logger.debug("Length of currently loaded signature: %d, with name: %s", len(_sourmash_sig), _sourmash_sig.name)
+        
+        self.logger.debug("Loaded %s with name %s", sig_type, _sourmash_sig_name)
 
         # Extract properties from the loaded signature
         self._ksize = _sourmash_sig.minhash.ksize
         self._scale = _sourmash_sig.minhash.scaled
         self._md5sum = _sourmash_sig.md5sum()
-        self._name = _sourmash_sig.name
+        self._name = _sourmash_sig_name
+        self.logger.debug("Loaded signature name is %s", self._name)
         self._filename = _sourmash_sig.filename
         self._track_abundance = _sourmash_sig.minhash.track_abundance
         
@@ -289,6 +307,7 @@ class SnipeSig:
         r"""
         Set the name of the signature.
         """
+        self.logger.debug("Setting name to %s", name)
         self._name = name
         
     @track_abundance.setter
@@ -513,7 +532,7 @@ class SnipeSig:
         self.sourmash_sig = sourmash.signature.SourmashSignature(mh, name=self._name, filename=self._filename)
         self.logger.debug("Conversion to sourmash.signature.SourmashSignature completed.")
 
-    def export(self, path, force=False) -> None:
+    def export(self, path) -> None:
         r"""
         Export the signature to a file.
 
@@ -528,9 +547,6 @@ class SnipeSig:
                 sourmash.signature.save_signatures_to_json([self.sourmash_sig], fp)
                 
         elif path.endswith(".zip"):
-            if os.path.exists(path): 
-                self.logger.debug(f"Output file already exists: {path}")
-                raise FileExistsError("Output file already exists.")
             try:
                 with sourmash.save_load.SaveSignatures_ZipFile(path) as save_sigs:
                     save_sigs.add(self.sourmash_sig)

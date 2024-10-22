@@ -391,12 +391,7 @@ class MultiSigReferenceQC:
 
         
         # ============= SAMPLE STATS =============
-        
-        # if sample name is empty, we must set one with the file basename without extension
-        if not sample_sig.name:
-            sample_sig.name = os.path.basename(sample_sig.filename).split('.')[0]
-            self.logger.warning("Sample name is empty. Setting it to %s.", sample_sig.name)
-        
+
         self.logger.debug("Processing sample statistics.")
         sample_stats_raw = sample_sig.get_sample_stats
         sample_stats.update({
@@ -734,9 +729,9 @@ class MultiSigReferenceQC:
             
             sample_nonref = sample_sig - self.reference_sig
 
-            self.logger.debug("\t-Size of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
+            self.logger.debug("\tSize of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
             # sample_nonref.trim_singletons()
-            self.logger.debug("\t-Size of non-reference k-mers after trimming singletons: %d hashes.", len(sample_nonref))
+            self.logger.debug("\tSize of non-reference k-mers after trimming singletons: %d hashes.", len(sample_nonref))
             
             sample_nonref_unique_hashes = len(sample_nonref)
             sample_nonref_total_abundance = sample_nonref.total_abundance
@@ -752,12 +747,11 @@ class MultiSigReferenceQC:
                 sample_nonref_var: SnipeSig = sample_nonref & variance_sig
                 
                 if self.export_varsigs:
-                    __sample_name = sample_sig.name.replace(' ','_').lower()
-                    __var_name = variance_name.replace(' ','_').lower()
+                    __sample_name = sample_sig.name.replace(' ','_')
+                    __var_name = variance_name.replace(' ','_')
                     __filename = os.path.basename(f"{__sample_name}_{__var_name}_nonref.zip".strip())
                     self.logger.debug("Exporting non-reference k-mers from variable '%s'.", __filename)
-                    var_export_file_path = sample_nonref_var.export(__filename)
-                    sample_nonref_var.export(var_export_file_path)
+                    sample_nonref_var.export(__filename)
 
                 sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
                 sample_nonref_var_fraction_total = sample_nonref_var_total_abundance / sample_nonref_total_abundance
