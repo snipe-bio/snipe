@@ -440,6 +440,20 @@ class MultiSigReferenceQC:
 
         # ============= AMPLICON STATS =============
         if self.amplicon_sig is not None:
+            
+            # we must make sure the amplicon is fully contained in the reference genome
+            _amplicon_ref_sig = self.amplicon_sig & self.reference_sig
+            if len(_amplicon_ref_sig) != len(self.amplicon_sig):
+                _sig_to_be_removed = self.amplicon_sig - _amplicon_ref_sig
+                _percentage_of_removal = len(_sig_to_be_removed) / len(self.amplicon_sig) * 100
+                # if percentage is more than 20% then we should warn the user again
+                if _percentage_of_removal > 20:
+                    self.logger.warning("[!] More than 20% of the amplicon signature is not contained in the reference genome.")
+
+                self.logger.warning(f"Amplicon signature is not fully contained in the reference genome.\nRemoving {len(_sig_to_be_removed)} hashes ({_percentage_of_removal:.2f}%) from the amplicon signature.")
+                self.amplicon_sig.difference_sigs(_sig_to_be_removed)
+                self.logger.debug("Amplicon signature has been modified to be fully contained in the reference genome.")
+            
             self.logger.debug("Calculating amplicon statistics.")
             sample_amplicon = sample_sig & self.amplicon_sig
             sample_amplicon_stats = sample_amplicon.get_sample_stats
