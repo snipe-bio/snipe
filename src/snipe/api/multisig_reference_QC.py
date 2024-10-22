@@ -737,7 +737,10 @@ class MultiSigReferenceQC:
                     _export_name = _export_sample_name + '_' + _export_var_name
                     sample_nonref_var.name = _export_name
                     self.logger.debug("Exporting non-reference k-mers from variable '%s'.", variance_name)
-                    sample_nonref_var.export(f"{sample_sig.name}_{variance_name}_nonref.zip")
+                    var_export_file_path = sample_nonref_var.export(f"{_export_name}.zip")
+                    # make sure it's a file name withput directory
+                    var_export_file_path = os.path.basename(var_export_file_path)
+                    sample_nonref_var.export(var_export_file_path)
 
                 sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
                 sample_nonref_var_fraction_total = sample_nonref_var_total_abundance / sample_nonref_total_abundance
