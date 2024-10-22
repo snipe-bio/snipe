@@ -526,10 +526,10 @@ class SnipeSig:
             self.logger.debug("Exporting signature to a .sig file.")
             with open(str(path), "wb") as fp:
                 sourmash.signature.save_signatures_to_json([self.sourmash_sig], fp)
-        # sourmash.save_load.SaveSignatures_SigFile
                 
         elif path.endswith(".zip"):
             if os.path.exists(path): 
+                self.logger.debug(f"Output file already exists: {path}")
                 raise FileExistsError("Output file already exists.")
             try:
                 with sourmash.save_load.SaveSignatures_ZipFile(path) as save_sigs:
