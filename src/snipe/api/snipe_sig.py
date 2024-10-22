@@ -2,10 +2,9 @@ import heapq
 import logging
 
 from snipe.api.enums import SigType
-from typing import Dict, Iterator, List, Union, Optional
+from typing import Dict, Iterator, List, Optional, Union
 import numpy as np
 import sourmash
-import os
 
 # Configure the root logger to CRITICAL to suppress unwanted logs by default
 logging.basicConfig(level=logging.CRITICAL)
@@ -53,9 +52,8 @@ class SnipeSig:
 
         # Initialize internal variables
         self.logger.debug("Initializing SnipeSig with sourmash_sig")
-
-        self._scale: int = None
-        self._ksize: int = None
+        self._scale: Optional[int] = None
+        self._ksize: Optional[int] = None
         self._md5sum: str = None
         self._hashes = np.array([], dtype=np.uint64)
         self._abundances = np.array([], dtype=np.uint32)

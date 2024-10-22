@@ -4,18 +4,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.conda]
 channels = ["conda-forge", "bioconda"]
-requirements = [
-    "python",
-    "pip",
-    "hatchling",
-    "hatch-conda-build",
-]
+requirements = ["python", "pip", "hatchling", "hatch-conda-build"]
 
 [project]
 name = "snipe"
-dynamic = [
-    "version",
-]
+dynamic = ["version"]
 description = "SRA-Scale sequence quality control"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { text = "AGPL" }
@@ -23,9 +16,7 @@ authors = [
     { name = "Mohamed Abuelanin", email = "mabuelanin@gmail.com" },
     { name = "Tamer Mansour", email = "drtamermansour@gmail.com" },
 ]
-maintainers = [
-    { name = "Mohamed Abuelanin", email = "mabuelanin@gmail.com" }
-]
+maintainers = [{ name = "Mohamed Abuelanin", email = "mabuelanin@gmail.com" }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GNU Affero General Public License v3",
@@ -34,16 +25,16 @@ classifiers = [
 keywords = ["API", "CLI", "tool", "snipe"]
 dependencies = [
     "requests>=2.25.1",
-    "click>=8.0.0",
+    "click>=8.1.7",
     "sourmash>=4.8.11",
-    "pytest",
+    "pytest>=8.3.3",
     "numpy",
-    "pyfastx",
-    "pathos",
-    "pandas",
-    "tqdm",
-    "lzstring",
-    "rapidfuzz",
+    "pyfastx>=2.1.0",
+    "pathos>=0.3.3",
+    "pandas>=2.2.3",
+    "tqdm>=4.66.5",
+    "lzstring>=1.0.4",
+    "rapidfuzz>=3.10.0",
 ]
 
 [project.optional-dependencies]
@@ -56,12 +47,10 @@ dev = [
     "mkdocstrings>=0.19.0",
     "mkdocs-redirects>=0.3.0",
     "watchdog>=2.1.0",
-    "pyfastx",
-    "pathos",
+    "pyfastx>=2.1.0",
+    "pathos>=0.3.3",
 ]
-test = [
-    "pytest>=7.0",
-]
+test = ["pytest"]
 
 [project.urls]
 Homepage = "https://github.com/snipe-bio/snipe"
@@ -103,21 +92,25 @@ testpaths = ["tests"]
 [tool.hatch.envs.default]
 dependencies = [
     "requests>=2.25.1",
-    "click>=8.0.0",
-    "ruff>=0.0.0",
-    "pytest>=7.0",
+    "click>=8.1.7",
     "sourmash>=4.8.11",
+    "pytest>=8.3.3",
+    "numpy",
+    "pyfastx>=2.1.0",
+    "pathos>=0.3.3",
+    "pandas",
+    "tqdm>=4.66.5",
+    "lzstring>=1.0.4",
+    "rapidfuzz>=3.10.0",
+    "ruff",
     "mkdocs>=1.6.1",
     "mkdocstrings>=0.26.1",
     "mkdocs-redirects>=1.2.1",
-    "watchdog>=5.0.3",
     "mkdocs-material>=9.5.35",
     "mkdocstrings-python>=1.11.1",
     "mkdocs-jupyter",
-    "pyfastx",
     "mkdocs-git-authors-plugin",
     "mkdocs-git-revision-date-localized-plugin",
-    "pytest",
 ]
 
 [tool.hatch.envs.default.scripts]
