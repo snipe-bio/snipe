@@ -42,7 +42,7 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
     """
     Sketch genomic data to generate signatures for QC.
 
-    This command allows you to generate sketches from sample, reference, or amplicon FASTA files. Only one input type (`--sample`, `--ref`, or `--amplicon`) can be specified at a time.
+    Only one input type (`--sample`, `--ref`, or `--amplicon`) can be specified at a time.
 
     ## Usage
 

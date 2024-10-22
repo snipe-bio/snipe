@@ -25,21 +25,16 @@ from snipe.cli.cli_qc_parallel import parallel_qc
 def cli():
     """
     Snipe CLI Tool
-    =============
-
-    This module provides a command-line interface (CLI) for performing various sketching and quality control operations on genomic data. It leverages the `click` library to handle command-line arguments and supports parallel processing for efficiency.
 
     Commands:
     - `sketch`: Perform sketching operations on genomic data.
     - `qc`: Execute quality control (QC) on multiple samples against a reference genome.
-    - `parallel-qc`: Parallelized version of the `qc` command (not optimized for memory).
     - `ops`: Perform various operations on sketches.
     """
     pass
 
 
 cli.add_command(cli_qc)
-# cli.add_command(parallel_qc)
 cli.add_command(cli_sketch)
 cli.add_command(cli_ops)
 

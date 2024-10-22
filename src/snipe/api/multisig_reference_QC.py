@@ -253,10 +253,10 @@ class MultiSigReferenceQC:
                  varsigs: Optional[List[SnipeSig]] = None,
                  enable_logging: bool = False,
                  export_varsigs: bool = False,
+                 custom_logger: Optional[logging.Logger] = None,
                  **kwargs):
         
-        # Initialize logger
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = custom_logger or logging.getLogger(__name__)
         
         # Initialize split cache
         self._split_cache: Dict[int, List[SnipeSig]] = {}
@@ -392,6 +392,11 @@ class MultiSigReferenceQC:
         
         # ============= SAMPLE STATS =============
         
+        # if sample name is empty, we must set one with the file basename without extension
+        if not sample_sig.name:
+            sample_sig.name = os.path.basename(sample_sig.filename).split('.')[0]
+            self.logger.warning("Sample name is empty. Setting it to %s.", sample_sig.name)
+        
         self.logger.debug("Processing sample statistics.")
         sample_stats_raw = sample_sig.get_sample_stats
         sample_stats.update({
@@ -440,6 +445,21 @@ class MultiSigReferenceQC:
 
         # ============= AMPLICON STATS =============
         if self.amplicon_sig is not None:
+            _amplicon_ref_sig = self.amplicon_sig & self.reference_sig
+            self.logger.debug(f"Amplicon signature is contained by the reference genome: {len(_amplicon_ref_sig) == len(self.amplicon_sig)} with intersection of {len(_amplicon_ref_sig)} hashes.") 
+            if len(_amplicon_ref_sig) != len(self.amplicon_sig):
+                _sig_to_be_removed = self.amplicon_sig - _amplicon_ref_sig
+                _percentage_of_removal = len(_sig_to_be_removed) / len(self.amplicon_sig) * 100
+                # if percentage is more than 20% then we should warn the user again
+                if _percentage_of_removal > 20:
+                    self.logger.error("[!] More than 20% of the amplicon signature is not contained in the reference genome.")
+                    raise ValueError("Amplicon signature is poorly contained in the reference genome.")
+
+                self.logger.debug(f"Amplicon signature is not fully contained in the reference genome.\nRemoving {len(_sig_to_be_removed)} hashes ({_percentage_of_removal:.2f}%) from the amplicon signature.")
+                self.amplicon_sig.difference_sigs(_sig_to_be_removed)
+                self.logger.debug("Amplicon signature has been modified to be fully contained in the reference genome.")
+            
+            
             self.logger.debug("Calculating amplicon statistics.")
             sample_amplicon = sample_sig & self.amplicon_sig
             sample_amplicon_stats = sample_amplicon.get_sample_stats
@@ -737,7 +757,10 @@ class MultiSigReferenceQC:
                     _export_name = _export_sample_name + '_' + _export_var_name
                     sample_nonref_var.name = _export_name
                     self.logger.debug("Exporting non-reference k-mers from variable '%s'.", variance_name)
-                    sample_nonref_var.export(f"{sample_sig.name}_{variance_name}_nonref.zip")
+                    var_export_file_path = sample_nonref_var.export(f"{_export_name}.zip")
+                    # make sure it's a file name withput directory
+                    var_export_file_path = os.path.basename(var_export_file_path)
+                    sample_nonref_var.export(var_export_file_path)
 
                 sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
                 sample_nonref_var_fraction_total = sample_nonref_var_total_abundance / sample_nonref_total_abundance

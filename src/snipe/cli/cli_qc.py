@@ -12,6 +12,70 @@ import concurrent.futures
 from snipe.api.enums import SigType
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.multisig_reference_QC import MultiSigReferenceQC
+# from snipe.api.metadata_manager import MetadataSerializer
+import json
+import lzstring
+import hashlib
+
+class MetadataSerializer:
+    def __init__(self, logger: Optional[logging.Logger] = None, hash_algo: str = 'sha256'):
+        self.hash_algo = hash_algo
+        self.logger = logger or self._configure_default_logger()
+
+    @staticmethod
+    def _configure_default_logger() -> logging.Logger:
+        logger = logging.getLogger('MetadataSerializer')
+        if not logger.handlers:
+            logger.setLevel(logging.DEBUG)
+            handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        return logger
+
+    def serialize_metadata(self, metadata: Dict[str, Any]) -> str:
+        try:
+            json_str = json.dumps(metadata, sort_keys=True)
+            compressor = lzstring.LZString()
+            compressed = compressor.compressToBase64(json_str)
+            return compressed
+        except (TypeError, ValueError) as e:
+            self.logger.error(f"Serialization failed: {e}")
+            raise ValueError(f"Serialization failed: {e}") from e
+
+    def deserialize_metadata(self, compressed_metadata: str) -> Dict[str, Any]:
+        try:
+            compressor = lzstring.LZString()
+            json_str = compressor.decompressFromBase64(compressed_metadata)
+            if json_str is None:
+                raise ValueError("Decompression returned None.")
+            metadata = json.loads(json_str)
+            return metadata
+        except (TypeError, ValueError, json.JSONDecodeError) as e:
+            self.logger.error(f"Deserialization failed: {e}")
+            raise ValueError(f"Deserialization failed: {e}") from e
+
+    def compute_checksum(self, data: Dict[str, Any]) -> str:
+        try:
+            serialized = json.dumps(data, sort_keys=True)
+            hash_obj = hashlib.new(self.hash_algo)
+            hash_obj.update(serialized.encode('utf-8'))
+            checksum = hash_obj.hexdigest()
+            return checksum
+        except (TypeError, ValueError, hashlib.Hash) as e:
+            self.logger.error(f"Checksum computation failed: {e}")
+            raise ValueError(f"Checksum computation failed: {e}") from e
+
+    def export_and_verify_metadata(self, metadata: Dict[str, Any]) -> Tuple[str, str]:
+        self.logger.info("Exporting metadata...")
+        metadata_str = self.serialize_metadata(metadata)
+        checksum = self.compute_checksum(metadata)
+        deserialized_metadata = self.deserialize_metadata(metadata_str)
+        if deserialized_metadata != metadata:
+            self.logger.error("Failed to serialize and deserialize metadata correctly.")
+            sys.exit(1)
+        self.logger.info("Metadata serialized and deserialized successfully.")
+        return metadata_str, checksum
 
 
 def validate_sig_input(ctx, param, value: tuple) -> str:
@@ -140,6 +204,12 @@ def process_subset(
     subset_failed = []
     for sample_path in subset:
         sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+        if len(sample_sig.name) == 0:
+            # warn and set to basename without extension
+            _newname = os.path.basename(sample_path).split('.')[0]
+            subset_logger.warning(f"Sample name is empty. Setting to: {_newname}")
+
+            
         try:
             sample_stats = qc_inst.process_sample(
                 sample_sig=sample_sig,
@@ -445,14 +515,19 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     start_time = time.time()
 
     # Configure logging
+    # Configure logging
     logger = logging.getLogger('snipe_qc')
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG if debug else logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     if not logger.hasHandlers():
         logger.addHandler(handler)
+
+    # Ensure that loggers propagate to the root logger
+    logging.getLogger().setLevel(logging.DEBUG if debug else logging.INFO)
+    logging.getLogger().propagate = True
 
     logger.info("Starting QC process.")
 
@@ -691,23 +766,65 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         for key, value in metadata_dict.items():
             df[key] = value
 
+    # Apply per-sample metadata
     if metadata_sample_dict:
         # Apply per-sample metadata
         df["tmp_basename"] = df["filename"].apply(os.path.basename)
-        # df.set_index("tmp_basename", inplace=True)
-        # map metadata to samples
-        for sample_basename, metadata_dict in metadata_sample_dict.items():
-            for key, value in metadata_dict.items():
+        # Map metadata to samples
+        for sample_basename, meta_dict in metadata_sample_dict.items():
+            for key, value in meta_dict.items():
                 df.loc[df["tmp_basename"] == sample_basename, key] = value
-        # df.reset_index(inplace=True)
         df.drop(columns=["tmp_basename"], inplace=True)
+            
+    export_metadata = {
+        # "command_invocation": command_invocation,
+        "reference": {
+            "name": reference_sig.name,
+            "md5sum": reference_sig.md5sum,
+            "filename": os.path.basename(ref)
+        },
+        "amplicon": {
+            "name": amplicon_sig.name,
+            "md5sum": amplicon_sig.md5sum,
+            "filename": os.path.basename(amplicon)
+        } if amplicon_sig else {
+            "name": "",
+            "md5sum": "",
+            "filename": ""
+        },
+        "ychr": {
+            "name": ychr_sig.name,
+            "md5sum": ychr_sig.md5sum,
+            "filename": ychr
+        } if ychr_sig else {
+            "name": "",
+            "md5sum": "",
+            "filename": ""
+        },
+        "variance": [
+            {
+                "name": var.name,
+                "md5sum": var.md5sum,
+                "filename": os.path.basename(path)
+            } for var, path in zip(vars_snipesigs, vars_paths)
+        ] if vars_snipesigs else []
+    }
+            
+    # Instantiate MetadataSerializer
+    METADATA = MetadataSerializer(
+        logger=logger,
+        hash_algo='sha256',
+    )
+        
+    metadata_str, metadata_md5sum = METADATA.export_and_verify_metadata(
+        metadata=export_metadata
+    )
 
-    # Export to TSV with comments
     try:
         with open(output, 'w', encoding='utf-8') as f:
-            # Write comment with command invocation
-            # f.write(f"# Command: {command_invocation}\n")
-            # Write the DataFrame to the file
+            # f.write(f"# Command: {command_invocation}\n") # disabled now for privacy
+            f.write(f"# Metadata MD5: {metadata_md5sum}\n")
+            f.write(f"# Metadata: {metadata_str}\n")            
             df.to_csv(f, sep='\t', index=False)
         logger.info(f"QC results successfully exported to {output}")
     except Exception as e:
