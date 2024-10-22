@@ -1,20 +1,14 @@
-import heapq
 import logging
 import warnings
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from scipy.optimize import OptimizeWarning, curve_fit
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.enums import SigType
 import os
-import requests
-from tqdm import tqdm
-from urllib.parse import urlparse
 from typing import Optional
-import sourmash
 from snipe.api.reference_QC import ReferenceQC
-import concurrent
 
 # pylint disable C0301
 

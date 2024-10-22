@@ -2,10 +2,9 @@ import heapq
 import logging
 
 from snipe.api.enums import SigType
-from typing import Dict, Iterator, List, Union, Optional
+from typing import Dict, Iterator, List, Union
 import numpy as np
 import sourmash
-import os
 
 # Configure the root logger to CRITICAL to suppress unwanted logs by default
 logging.basicConfig(level=logging.CRITICAL)

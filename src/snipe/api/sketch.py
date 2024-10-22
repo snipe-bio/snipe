@@ -11,8 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pyfastx import Fastx as SequenceReader # pylint: disable=no-name-in-module
 import sourmash
 from pathos.multiprocessing import ProcessingPool as Pool
-from snipe.api.enums import SigType
-from snipe.api.snipe_sig import SnipeSig
+
 
 
 class SnipeSketch:
