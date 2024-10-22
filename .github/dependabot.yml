@@ -12,4 +12,4 @@ updates:
   labels:
     - "dependencies"
     - "github-actions"
-  versioning-strategy: auto
+
