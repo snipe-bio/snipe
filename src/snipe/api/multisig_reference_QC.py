@@ -392,6 +392,11 @@ class MultiSigReferenceQC:
         
         # ============= SAMPLE STATS =============
         
+        # if sample name is empty, we must set one with the file basename without extension
+        if not sample_sig.name:
+            sample_sig.name = os.path.basename(sample_sig.filename).split('.')[0]
+            self.logger.warning("Sample name is empty. Setting it to %s.", sample_sig.name)
+        
         self.logger.debug("Processing sample statistics.")
         sample_stats_raw = sample_sig.get_sample_stats
         sample_stats.update({

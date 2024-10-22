@@ -140,6 +140,12 @@ def process_subset(
     subset_failed = []
     for sample_path in subset:
         sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
+        if len(sample_sig.name) == 0:
+            # warn and set to basename without extension
+            _newname = os.path.basename(sample_path).split('.')[0]
+            subset_logger.warning(f"Sample name is empty. Setting to: {_newname}")
+
+            
         try:
             sample_stats = qc_inst.process_sample(
                 sample_sig=sample_sig,
