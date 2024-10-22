@@ -515,14 +515,19 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     start_time = time.time()
 
     # Configure logging
+    # Configure logging
     logger = logging.getLogger('snipe_qc')
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG if debug else logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     if not logger.hasHandlers():
         logger.addHandler(handler)
+
+    # Ensure that loggers propagate to the root logger
+    logging.getLogger().setLevel(logging.DEBUG if debug else logging.INFO)
+    logging.getLogger().propagate = True
 
     logger.info("Starting QC process.")
 

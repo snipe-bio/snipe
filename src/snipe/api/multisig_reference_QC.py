@@ -253,10 +253,10 @@ class MultiSigReferenceQC:
                  varsigs: Optional[List[SnipeSig]] = None,
                  enable_logging: bool = False,
                  export_varsigs: bool = False,
+                 custom_logger: Optional[logging.Logger] = None,
                  **kwargs):
         
-        # Initialize logger
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = custom_logger or logging.getLogger(__name__)
         
         # Initialize split cache
         self._split_cache: Dict[int, List[SnipeSig]] = {}
@@ -445,19 +445,20 @@ class MultiSigReferenceQC:
 
         # ============= AMPLICON STATS =============
         if self.amplicon_sig is not None:
-            
-            # we must make sure the amplicon is fully contained in the reference genome
             _amplicon_ref_sig = self.amplicon_sig & self.reference_sig
+            self.logger.debug(f"Amplicon signature is contained by the reference genome: {len(_amplicon_ref_sig) == len(self.amplicon_sig)} with intersection of {len(_amplicon_ref_sig)} hashes.") 
             if len(_amplicon_ref_sig) != len(self.amplicon_sig):
                 _sig_to_be_removed = self.amplicon_sig - _amplicon_ref_sig
                 _percentage_of_removal = len(_sig_to_be_removed) / len(self.amplicon_sig) * 100
                 # if percentage is more than 20% then we should warn the user again
                 if _percentage_of_removal > 20:
-                    self.logger.warning("[!] More than 20% of the amplicon signature is not contained in the reference genome.")
+                    self.logger.error("[!] More than 20% of the amplicon signature is not contained in the reference genome.")
+                    raise ValueError("Amplicon signature is poorly contained in the reference genome.")
 
-                self.logger.warning(f"Amplicon signature is not fully contained in the reference genome.\nRemoving {len(_sig_to_be_removed)} hashes ({_percentage_of_removal:.2f}%) from the amplicon signature.")
+                self.logger.debug(f"Amplicon signature is not fully contained in the reference genome.\nRemoving {len(_sig_to_be_removed)} hashes ({_percentage_of_removal:.2f}%) from the amplicon signature.")
                 self.amplicon_sig.difference_sigs(_sig_to_be_removed)
                 self.logger.debug("Amplicon signature has been modified to be fully contained in the reference genome.")
+            
             
             self.logger.debug("Calculating amplicon statistics.")
             sample_amplicon = sample_sig & self.amplicon_sig
