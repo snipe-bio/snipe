@@ -396,7 +396,7 @@ class MultiSigReferenceQC:
             "k-mer total abundance": sample_stats_raw["total_abundance"],
             "k-mer mean abundance": sample_stats_raw["mean_abundance"],
             "k-mer median abundance": sample_stats_raw["median_abundance"],
-            "num_singletons": sample_stats_raw["num_singletons"],
+            "singleton k-mers": sample_stats_raw["num_singletons"],
         })
 
         # ============= GENOME STATS =============
@@ -573,6 +573,11 @@ class MultiSigReferenceQC:
                 
         # ============= CHR STATS =============
         
+        def sort_chromosomes(chrom_dict):
+            # Sort based on numeric part or fallback to string for non-numeric chromosomes
+            sorted_keys = sorted(chrom_dict, key=lambda x: (int(x.split('-')[1]) if x.split('-')[1].isdigit() else float('inf'), x))
+            return {k: chrom_dict[k] for k in sorted_keys}
+        
         if self.specific_chr_to_sig:
             self.logger.debug("Calculating mean abundance for each chromosome.")
             for chr_name, chr_sig in self.specific_chr_to_sig.items():
@@ -581,27 +586,15 @@ class MultiSigReferenceQC:
                 chr_stats = chr_sample_sig.get_sample_stats
                 chr_to_mean_abundance[chr_name] = chr_stats["mean_abundance"]
                 self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
-            
-            # chromosomes are numberd from 1 to ..., sort them by numer (might be string for sex chromosomes) then prefix them with chr-
-            def sort_chromosomes(chr_name):
-                try:
-                    # Try to convert to integer for numeric chromosomes
-                    return (0, int(chr_name))
-                except ValueError:
-                    # Non-numeric chromosomes (like 'x', 'y', 'z', etc.)
-                    return (1, chr_name)
-                
 
             # Create a new dictionary with sorted chromosome names and prefixed with 'chr-'
             sorted_chr_to_mean_abundance = {
                 f"chr-{chr_name.replace('sex-','').replace('autosome-','')}": chr_to_mean_abundance[chr_name]
-                for chr_name in sorted(chr_to_mean_abundance, key=sort_chromosomes)
+                for chr_name in sort_chromosomes(chr_to_mean_abundance)
             }
             
-            # Delete the mitochondrial from sorted_chr_to_mean_abundance
-            if "mitochondrial-M" in sorted_chr_to_mean_abundance:
-                self.logger.debug("Removing mitochondrial-M from sorted_chr_to_mean_abundance.")
-                sorted_chr_to_mean_abundance.pop("mitochondrial-M")
+            # delete any key with mitochondrial in it
+            sorted_chr_to_mean_abundance = {k: v for k, v in sorted_chr_to_mean_abundance.items() if "mitochondrial" not in k.lower()}
             
             chrs_stats.update(sorted_chr_to_mean_abundance)
 

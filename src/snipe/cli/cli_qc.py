@@ -613,6 +613,51 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                 logger.error(f"Failed to load variance signature from {path}: {e}")
                     
         logger.debug(f"Variance signature paths: {vars_paths}")
+    
+            
+    export_metadata = {
+            # "command_invocation": command_invocation,
+            "reference": {
+                "name": reference_sig.name,
+                "md5sum": reference_sig.md5sum,
+                "filename": os.path.basename(ref)
+            },
+            "amplicon": {
+                "name": amplicon_sig.name,
+                "md5sum": amplicon_sig.md5sum,
+                "filename": os.path.basename(amplicon)
+            } if amplicon_sig else {
+                "name": "",
+                "md5sum": "",
+                "filename": ""
+            },
+            "ychr": {
+                "name": ychr_sig.name,
+                "md5sum": ychr_sig.md5sum,
+                "filename": ychr
+            } if ychr_sig else {
+                "name": "",
+                "md5sum": "",
+                "filename": ""
+            },
+            "variance": [
+                {
+                    "name": var.name,
+                    "md5sum": var.md5sum,
+                    "filename": os.path.basename(path)
+                } for var, path in zip(vars_snipesigs, vars_paths)
+            ] if vars_snipesigs else []
+        }
+                
+    # Instantiate MetadataSerializer
+    METADATA = MetadataSerializer(
+        logger=logger,
+        hash_algo='sha256',
+    )
+        
+    metadata_str, metadata_md5sum = METADATA.export_and_verify_metadata(
+        metadata=export_metadata
+    )
             
 
     predict_extra_folds = [1, 2, 5, 9]
@@ -782,49 +827,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                 df.loc[df["tmp_basename"] == sample_basename, key] = value
         df.drop(columns=["tmp_basename"], inplace=True)
             
-    export_metadata = {
-        # "command_invocation": command_invocation,
-        "reference": {
-            "name": reference_sig.name,
-            "md5sum": reference_sig.md5sum,
-            "filename": os.path.basename(ref)
-        },
-        "amplicon": {
-            "name": amplicon_sig.name,
-            "md5sum": amplicon_sig.md5sum,
-            "filename": os.path.basename(amplicon)
-        } if amplicon_sig else {
-            "name": "",
-            "md5sum": "",
-            "filename": ""
-        },
-        "ychr": {
-            "name": ychr_sig.name,
-            "md5sum": ychr_sig.md5sum,
-            "filename": ychr
-        } if ychr_sig else {
-            "name": "",
-            "md5sum": "",
-            "filename": ""
-        },
-        "variance": [
-            {
-                "name": var.name,
-                "md5sum": var.md5sum,
-                "filename": os.path.basename(path)
-            } for var, path in zip(vars_snipesigs, vars_paths)
-        ] if vars_snipesigs else []
-    }
-            
-    # Instantiate MetadataSerializer
-    METADATA = MetadataSerializer(
-        logger=logger,
-        hash_algo='sha256',
-    )
-        
-    metadata_str, metadata_md5sum = METADATA.export_and_verify_metadata(
-        metadata=export_metadata
-    )
     
     # santize file_path and filename
     df["filename"] = df["file_path"].apply(os.path.basename)
