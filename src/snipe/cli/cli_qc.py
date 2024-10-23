@@ -834,13 +834,27 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     # drop file_path
     df.drop(columns=["file_path"], inplace=True)
     
+    """
+    coverage: 5 decimal points
+    xploidy, ycoverage, CV, mean,median,chr-: 2 decimal points
+    mapping index, predicted contamination, error index, 3 decimal points
+    """
+    
+    floating_5 = ["coverage"]
+    floating_2 = ["ploidy", "chrY Coverage", "CV", "mean", "median", "chr-"]
+    floating_3 = ["mapping index", "contamination", "error"]
+    
     # for any float columns, round to 4 decimal places
     for col in df.columns:
-        if df[col].dtype == float:
-            df[col] = df[col].round(4)
-        # if the column has all floating points 0, convert to int
         if (df[col].dtype == float) and (df[col].eq(0).all()):
             df[col] = df[col].astype(int)
+        if any([x in col for x in floating_5]):
+            df[col] = df[col].round(5)
+        elif any([x in col for x in floating_2]):
+            df[col] = df[col].round(2)
+        elif any([x in col for x in floating_3]):
+            df[col] = df[col].round(3)
+        
     
     try:
         with open(output, 'w', encoding='utf-8') as f:
