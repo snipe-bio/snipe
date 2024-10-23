@@ -616,7 +616,8 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     
             
     export_metadata = {
-            # "command_invocation": command_invocation,
+            "scale": reference_sig.scale,
+            "ksize": reference_sig.ksize,
             "reference": {
                 "name": reference_sig.name,
                 "md5sum": reference_sig.md5sum,
@@ -833,7 +834,14 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     # drop file_path
     df.drop(columns=["file_path"], inplace=True)
     
-
+    # for any float columns, round to 4 decimal places
+    for col in df.columns:
+        if df[col].dtype == float:
+            df[col] = df[col].round(4)
+        # if the column has all floating points 0, convert to int
+        if (df[col].dtype == float) and (df[col].eq(0).all()):
+            df[col] = df[col].astype(int)
+    
     try:
         with open(output, 'w', encoding='utf-8') as f:
             # f.write(f"# Command: {command_invocation}\n") # disabled now for privacy
