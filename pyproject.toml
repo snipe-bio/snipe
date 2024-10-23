@@ -34,7 +34,6 @@ dependencies = [
     "pandas>=2.2.3",
     "tqdm>=4.66.5",
     "lzstring>=1.0.4",
-    "rapidfuzz>=3.10.0",
 ]
 
 [project.optional-dependencies]
@@ -101,7 +100,6 @@ dependencies = [
     "pandas",
     "tqdm>=4.66.5",
     "lzstring>=1.0.4",
-    "rapidfuzz>=3.10.0",
     "ruff",
     "mkdocs>=1.6.1",
     "mkdocstrings>=0.26.1",

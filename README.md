@@ -4,15 +4,11 @@ snipe is a user-friendly tool that enables large-scale, alignment-free quality c
 
 ## Installation
 
-You can install snipe from the pip test channel:
+You can install snipe from the pip test channel until the pypa team respond to [our PEP 541 Request](https://github.com/pypi/support/issues/4364)
 
 ```bash
 pip install -i https://test.pypi.org/simple/ snipe
 ```
-
-## Conda
-
-You can also install snipe from the conda-forge channel:
 
 ```bash
 conda install bioconda::snipe
