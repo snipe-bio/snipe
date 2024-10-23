@@ -171,7 +171,7 @@ def process_subset(
     # Load variance signatures if provided
     vars_snipesigs = []
     if vars:
-        subset_logger.info(f"Loading {len(vars)} variance signature(s).")
+        subset_logger.debug(f"Loading {len(vars)} variance signature(s).")
         for path in vars:
             if not os.path.exists(path):
                 subset_logger.error(f"Variance signature file does not exist: {path}")
@@ -599,7 +599,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     vars_paths = []
     vars_snipesigs = []
     if vars:
-        logger.info(f"Loading {len(vars)} variance signature(s).")
+        logger.debug(f"Loading {len(vars)} variance signature(s).")
         for path in vars:
             if not os.path.exists(path):
                 logger.error(f"Variance signature file does not exist: {path}")

@@ -9,7 +9,7 @@ requirements = ["python", "pip", "hatchling", "hatch-conda-build"]
 [project]
 name = "snipe"
 dynamic = ["version"]
-description = "SRA-Scale sequence quality control"
+description = "Blazingly fast SRA-scale sequence analysis & QC"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { text = "AGPL" }
 authors = [
@@ -22,7 +22,7 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
 ]
-keywords = ["API", "CLI", "tool", "snipe"]
+keywords = ["snipe", "bioinformatics", "sra", "fastq", "sequence", "analysis", "qc", "quality-control"]
 dependencies = [
     "requests>=2.25.1",
     "click>=8.1.7",
