@@ -841,8 +841,8 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     """
     
     floating_5 = ["coverage"]
-    floating_2 = ["ploidy", "chrY Coverage", "CV", "mean", "median", "chr-"]
-    floating_3 = ["mapping index", "contamination", "error"]
+    floating_2 = ["Ploidy", "chrY Coverage", "CV", "mean", "median", "chr-", 'Relative total abundance', 'fraction of total abundance']
+    floating_3 = ["Mapping index", "contamination", "error"]
     
     # for any float columns, round to 4 decimal places
     for col in df.columns:
