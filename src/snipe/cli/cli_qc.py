@@ -858,9 +858,8 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     
     try:
         with open(output, 'w', encoding='utf-8') as f:
-            # f.write(f"# Command: {command_invocation}\n") # disabled now for privacy
-            f.write(f"# Metadata MD5: {metadata_md5sum}\n")
-            f.write(f"# Metadata: {metadata_str}\n")            
+            header_dict = {"sha256": metadata_md5sum, "metadata": metadata_str}
+            f.write(f"#{json.dumps(header_dict)}\n")         
             df.to_csv(f, sep='\t', index=False)
         logger.info(f"QC results successfully exported to {output}")
     except Exception as e:
