@@ -619,7 +619,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     
 
     export_metadata = {
-            "snipe_version": __version__,
             "scale": reference_sig.scale,
             "ksize": reference_sig.ksize,
             "reference": {
@@ -800,7 +799,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         df.drop(columns=["tmp_basename"], inplace=True)
 
 
-    # santize file_path and filename
+    # sanitize file_path and filename
     df["filename"] = df["file_path"].apply(os.path.basename)
     # drop file_path
     df.drop(columns=["file_path"], inplace=True)
@@ -813,7 +812,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     
     floating_5 = ["coverage"]
     floating_2 = ["Ploidy", "chrY Coverage", "CV", "mean", "median", "chr-", 'Relative total abundance', 'fraction of total abundance']
-    floating_3 = ["Mapping index", "contamination", "error"]
+    floating_3 = ["Mapping index", "contamination", "error", "k-mer-to-bases ratio"]
 
     # for any float columns, round to 4 decimal places
     for col in df.columns:
@@ -831,8 +830,8 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     
     try:
         with open(output, 'w', encoding='utf-8') as f:
-            header_dict = {"sha256": metadata_md5sum, "metadata": metadata_str}
-            f.write(f"#{json.dumps(header_dict)}\n")         
+            header_dict = {"snipe-version": __version__, "metadata": metadata_str}
+            f.write(f"#{json.dumps(header_dict)}\n")
             df.to_csv(f, sep='\t', index=False)
         logger.info(f"QC results successfully exported to {output}")
     except Exception as e:

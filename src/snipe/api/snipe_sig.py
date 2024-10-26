@@ -5,6 +5,7 @@ from snipe.api.enums import SigType
 from typing import Dict, Iterator, List, Optional, Union
 import numpy as np
 import sourmash
+import re
 
 # Configure the root logger to CRITICAL to suppress unwanted logs by default
 logging.basicConfig(level=logging.CRITICAL)
@@ -169,10 +170,19 @@ class SnipeSig:
         self.logger.debug("Loaded signature name is %s", self._name)
         self._filename = _sourmash_sig.filename
         self._track_abundance = _sourmash_sig.minhash.track_abundance
+        self._bases_count = 0
         
-        if self._name.endswith("-snipesample"):
+        if "-snipesample" in self._name:
             self._name = self._name.replace("-snipesample", "")
+            # search for the pattern ;snipe_bases=([0-9]+); in the name
+            match = re.search(r";snipe_bases=([0-9]+)", self._name)
+            if match:
+                self._bases_count = int(match.group(1))
+                self.logger.debug("Found reported bases count in the name: %d", self._bases_count)
+                self._name = re.sub(r";snipe_bases=([0-9]+)", "", self._name)
+
             self.logger.debug("Found a sample signature with the snipe suffix `-snipesample`. Restoring original name `%s`.", self._name)
+            
         elif self._name.endswith("-snipeamplicon"):
             self._name = self._name.replace("-snipeamplicon", "")
             self.logger.debug("Found an amplicon signature with the snipe suffix `-snipeamplicon`. Restoring original name `%s`.", self._name)
@@ -194,9 +204,9 @@ class SnipeSig:
 
         self.logger.debug(
             "Loaded sourmash signature from file: %s, name: %s, md5sum: %s, ksize: %d, scale: %d, "
-            "track_abundance: %s, type: %s, length: %d",
+            "track_abundance: %s, type: %s, length: %d, bases_count: %d",
             self._filename, self._name, self._md5sum, self._ksize, self._scale,
-            self._track_abundance, self._type, len(self._hashes)
+            self._track_abundance, self._type, len(self._hashes), self._bases_count
         )
         self.logger.debug("Hashes sorted during initialization.")
         self.logger.debug("Sourmash signature loading completed successfully.")
@@ -1502,7 +1512,7 @@ class SnipeSig:
             stats["mean_abundance"] = self.mean_abundance
             stats["median_abundance"] = self.median_abundance
             stats["num_singletons"] = self.count_singletons()
-            
+            stats["snipe_bases"] = self._bases_count
         return stats
 
     @property

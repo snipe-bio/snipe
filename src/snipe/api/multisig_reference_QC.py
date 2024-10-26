@@ -397,6 +397,8 @@ class MultiSigReferenceQC:
             "k-mer mean abundance": sample_stats_raw["mean_abundance"],
             "k-mer median abundance": sample_stats_raw["median_abundance"],
             "singleton k-mers": sample_stats_raw["num_singletons"],
+            "snipe bases": sample_stats_raw["snipe_bases"],
+            "k-mer-to-bases ratio": ((sample_stats_raw["total_abundance"] * sample_stats_raw["scale"]) / sample_stats_raw["snipe_bases"]) if sample_stats_raw["snipe_bases"] > 0 else "",
         })
 
         # ============= GENOME STATS =============
