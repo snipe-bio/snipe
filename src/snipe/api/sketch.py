@@ -91,11 +91,13 @@ class SnipeSketch:
                 n=0, ksize=ksize, scaled=scaled, track_abundance=True
             )
             local_count = 0
+            base_count = 0
 
             for idx, (_, seq) in enumerate(fa_reader):
                 if idx % total_threads == thread_id:
                     mh.add_sequence(seq, force=True)
                     local_count += 1
+                    base_count += len(seq)
 
                     if local_count >= batch_size:
                         progress_queue.put(batch_size)
@@ -107,7 +109,7 @@ class SnipeSketch:
             self.logger.debug(
                 "Thread %d processed %d hashes.", thread_id, len(mh)
             )
-            return mh
+            return mh, base_count
 
         except KeyboardInterrupt:
             self.logger.warning("KeyboardInterrupt detected in process_sequences.")
@@ -176,7 +178,7 @@ class SnipeSketch:
         k_size: int = 51,
         scale: int = 10_000,
         **kwargs: Any,
-    ) -> sourmash.SourmashSignature:
+    ) -> Tuple[sourmash.SourmashSignature, int]:
         """
         Create a FracMinHash sketch for a sample using parallel processing.
 
@@ -191,7 +193,7 @@ class SnipeSketch:
             **kwargs (Any): Additional keyword arguments.
 
         Returns:
-            sourmash.SourmashSignature: The resulting Sourmash signature.
+            Tuple[sourmash.SourmashSignature, int]: The resulting signature and total bases processed.
         """
         self.logger.info("Starting sketching with %d processes...", num_processes)
 
@@ -247,12 +249,15 @@ class SnipeSketch:
             monitor_thread.join()
 
         minhashes = []
+        total_bases = 0
+        
         for idx, result in enumerate(results):
             try:
-                mh = result.get()
+                mh, base_count = result.get()
                 if mh:
                     minhashes.append(mh)
-                    self.logger.debug("MinHash from thread %d collected.", idx)
+                    total_bases += base_count
+                    self.logger.debug("MinHash from thread %d collected with %d bases.", idx, base_count)
             except Exception as e:
                 self.logger.error("Error retrieving MinHash from thread %d: %s", idx, e)
 
@@ -263,11 +268,14 @@ class SnipeSketch:
         mh_full = minhashes[0]
         for mh in minhashes[1:]:
             mh_full.merge(mh)
+            
+        # append number of bases to the signature name for QC purposes
+        sample_name += f";snipe_bases={total_bases}"
 
         signature = sourmash.SourmashSignature(mh_full, name=sample_name)
-        self.logger.info("Sketching completed for sample: %s", sample_name)
+        self.logger.info("Sketching completed for sample: %s with total bases: %d", sample_name, total_bases)
 
-        return signature
+        return signature, total_bases
 
     def sample_sketch(
         self,
@@ -299,7 +307,7 @@ class SnipeSketch:
         """
         self.logger.info("Starting sample sketch for: %s", sample_name)
         try:
-            signature = self._sketch_sample(
+            signature, total_bases = self._sketch_sample(
                 sample_name=sample_name,
                 fasta_file=filename,
                 num_processes=num_processes,
@@ -308,8 +316,8 @@ class SnipeSketch:
                 scale=scale,
                 **kwargs,
             )
-            self.logger.info("Sample sketch completed for: %s", sample_name)
-            return signature
+            self.logger.info("Sample sketch completed for: %s, with total number of %d bases", sample_name, total_bases)
+            return signature, total_bases
         except Exception as e:
             self.logger.error(
                 "Error occurred during sample sketching: %s", str(e)

@@ -12,10 +12,13 @@ import concurrent.futures
 from snipe.api.enums import SigType
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.multisig_reference_QC import MultiSigReferenceQC
-# from snipe.api.metadata_manager import MetadataSerializer
+from snipe import __version__
+
 import json
 import lzstring
 import hashlib
+
+
 
 class MetadataSerializer:
     def __init__(self, logger: Optional[logging.Logger] = None, hash_algo: str = 'sha256'):
@@ -614,8 +617,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                     
         logger.debug(f"Variance signature paths: {vars_paths}")
     
-            
+
     export_metadata = {
+            "snipe_version": __version__,
             "scale": reference_sig.scale,
             "ksize": reference_sig.ksize,
             "reference": {
