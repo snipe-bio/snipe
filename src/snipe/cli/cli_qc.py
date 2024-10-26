@@ -666,11 +666,11 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     sample_to_stats = {}
     failed_samples = []
 
-    if cores > 1 and len(valid_samples) > 1:
+    if len(valid_samples):
         logger.info(f"Parallel processing enabled with {cores} cores.")
         # Split valid_samples into chunks
         chunks = split_chunks(valid_samples, cores)
-        logger.debug(f"Splitting samples into {len(chunks)} chunks for parallel processing.")
+        logger.debug(f"Splitting samples into {len(chunks)} chunks for processing.")
 
         # Prepare arguments for each worker
         worker_args = [
@@ -691,7 +691,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             # Map each chunk to the process_subset function
             futures = {executor.submit(process_subset, *args): idx for idx, args in enumerate(worker_args)}
             # Initialize tqdm with total number of samples
-            with tqdm(total=len(valid_samples), desc="Processing samples in parallel") as pbar:
+            with tqdm(total=len(valid_samples), desc="Processing samples") as pbar:
                 for future in concurrent.futures.as_completed(futures):
                     try:
                         subset_stats, subset_failed = future.result()
@@ -709,39 +709,6 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
                         pbar.update(len(subset))
                         failed_samples.extend(subset)
                         continue
-    else:
-        logger.info("Parallel processing not enabled. Processing samples sequentially.")
-        # Sequential processing as original
-        qc_instance = MultiSigReferenceQC(
-                reference_sig=reference_sig,
-                amplicon_sig=amplicon_sig,
-                ychr=ychr_sig if ychr_sig else None,
-                varsigs=vars_snipesigs if vars_snipesigs else None,
-                export_varsigs=export_var,
-                enable_logging=debug
-            )
-        
-        with tqdm(total=len(valid_samples), desc="Processing samples") as pbar:
-            for sample_path in valid_samples:
-                sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
-                qc_instance.logger.debug(f"DELME Processing sample: {sample_sig.name}")
-                if sample_sig.name == "":
-                    _newname = os.path.basename(sample_path).split('.')[0]
-                    sample_sig.name = _newname
-                    qc_instance.logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
-                
-                try:
-                    sample_stats = qc_instance.process_sample(
-                        sample_sig=sample_sig,
-                        predict_extra_folds=predict_extra_folds if roi else None,
-                        advanced=True
-                    )
-                    sample_to_stats[sample_sig.name] = sample_stats
-                except Exception as e:
-                    failed_samples.append(sample_sig.name)
-                    qc_instance.logger.error(f"Failed to process sample {sample_sig.name}: {e}")
-                finally:
-                    pbar.update(1)
 
     # Separate successful and failed results
     succeeded = list(sample_to_stats.keys())
@@ -827,13 +794,13 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             for key, value in meta_dict.items():
                 df.loc[df["tmp_basename"] == sample_basename, key] = value
         df.drop(columns=["tmp_basename"], inplace=True)
-            
-    
+
+
     # santize file_path and filename
     df["filename"] = df["file_path"].apply(os.path.basename)
     # drop file_path
     df.drop(columns=["file_path"], inplace=True)
-    
+
     """
     coverage: 5 decimal points
     xploidy, ycoverage, CV, mean,median,chr-: 2 decimal points
@@ -843,7 +810,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     floating_5 = ["coverage"]
     floating_2 = ["Ploidy", "chrY Coverage", "CV", "mean", "median", "chr-", 'Relative total abundance', 'fraction of total abundance']
     floating_3 = ["Mapping index", "contamination", "error"]
-    
+
     # for any float columns, round to 4 decimal places
     for col in df.columns:
         if (df[col].dtype == float) and (df[col].eq(0).all()):
@@ -854,7 +821,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             df[col] = df[col].round(2)
         elif any([x in col for x in floating_3]):
             df[col] = df[col].round(3)
-        
+    
+    # make sure all integer columns are converted to int
+    df = df.apply(lambda col: col.apply(lambda x: int(x) if isinstance(x, float) and x.is_integer() else x))
     
     try:
         with open(output, 'w', encoding='utf-8') as f:

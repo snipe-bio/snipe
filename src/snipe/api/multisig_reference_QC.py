@@ -388,7 +388,7 @@ class MultiSigReferenceQC:
         self.logger.debug("Processing sample statistics.")
         sample_stats_raw = sample_sig.get_sample_stats
         sample_stats.update({
-            "name": sample_stats_raw["name"],
+            "Experiment ID": sample_stats_raw["name"],
             "ksize": sample_stats_raw["ksize"],
             "scale": sample_stats_raw["scale"],
             "filename": sample_stats_raw["filename"],
