@@ -186,7 +186,7 @@ def process_subset(
             except Exception as e:
                 subset_logger.error(f"Failed to load variance signature from {path}: {e}")
                 return {}, subset  # All samples in this subset fail
-    
+
     # Initialize QC instance
     try:
         qc_inst = MultiSigReferenceQC(
@@ -200,9 +200,9 @@ def process_subset(
     except Exception as e:
         subset_logger.error(f"Failed to initialize MultiSigReferenceQC: {e}")
         return {}, subset  # All samples in this subset fail
-    
+
     predict_extra_folds = [1, 2, 5, 9]
-    
+
     subset_stats = {}
     subset_failed = []
     for sample_path in subset:
@@ -210,10 +210,6 @@ def process_subset(
         if sample_sig.name == "":
             _newname = os.path.basename(sample_path).split('.')[0]
             sample_sig.name = _newname
-            print(sample_sig)
-            if len(sample_sig.hashes) == 0:
-                e_msg = f"Sample signature is empty. This might be coming from sketching reads with length < {sample_sig.ksize}, or super small sample."
-                raise ValueError(e_msg)
             subset_logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
 
         try:
@@ -830,6 +826,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     
     # make sure all integer columns are converted to int
     df = df.apply(lambda col: col.apply(lambda x: int(x) if isinstance(x, float) and x.is_integer() else x))
+    df_zero_uniqe_hashes = df[df["Total unique k-mers"] == 0]
+    df = df[df["Total unique k-mers"] != 0]
+    logger.warning(f"Empty sigs not processed: {len(df_zero_uniqe_hashes)}: {', '.join(df_zero_uniqe_hashes['filename'])}")
     
     try:
         with open(output, 'w', encoding='utf-8') as f:
