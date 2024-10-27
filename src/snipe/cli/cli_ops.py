@@ -1145,18 +1145,9 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
                 report.write("-"*50 + "\n")
                 report.write("Merged Signatures:\n")
                 if result['merged_signatures']:
-                    for sig in result['merged_signatures']:
-                        report.write(f"    - {sig}\n")
-                else:
-                    report.write("    None\n")
-
-                report.write("Skipped Signatures (Due to Duplication):\n")
+                    report.write("    - " + "\n    - ".join(result['merged_signatures']) + "\n")
                 if result['skipped_signatures']:
-                    for sig in result['skipped_signatures']:
-                        report.write(f"    - {sig}\n")
-                else:
-                    report.write("    None\n")
-
+                    report.write(f"Skipped Signatures (Due to Duplication): {' -'.join(result['skipped_signatures'])}\n")
                 report.write(f"Output File: {result['output_file'] if result['output_file'] else 'N/A'}\n")
                 report.write(f"Status: {result['status'].capitalize()}\n")
                 if result['status'] == 'failure':
