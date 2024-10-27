@@ -381,6 +381,10 @@ class MultiSigReferenceQC:
         if sample_sig._type != SigType.SAMPLE:
             self.logger.error("Invalid signature type for sample_sig: %s | %s", sample_sig.sigtype, sample_sig._type)
             raise ValueError(f"sample_sig must be of type {SigType.SAMPLE}, got {sample_sig.sigtype}")
+        
+        if len(sample_sig) == 0:
+            e_msg = f"Sample signature is empty. This might be coming from sketching reads with length < {sample_sig.ksize}, or super small sample."
+            raise ValueError(e_msg)
 
         
         # ============= SAMPLE STATS =============
@@ -845,7 +849,14 @@ class MultiSigReferenceQC:
                     reference_sig=roi_reference_sig,
                     enable_logging=self.enable_logging
                 )
-                cumulative_stats = cumulative_qc.get_aggregated_stats()
+                
+                # use MultiSigQC instead of ReferenceQC
+                cumulative_stats = self.process_sample(
+                    sample_sig=cumulative_snipe_sig,
+                    predict_extra_folds=None,
+                    advanced=False
+                )
+                
                 cumulative_coverage_index = cumulative_stats.get("Genome coverage index", 0.0)
                 cumulative_total_abundance = cumulative_total_abundances[i]
 
