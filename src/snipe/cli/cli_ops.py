@@ -1143,9 +1143,9 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
             for result in results:
                 report.write(f"Experiment ID: {result['exp_name']}\n")
                 report.write("-"*50 + "\n")
-                report.write("Merged Signatures:\n")
+                report.write("Merged Signatures:")
                 if result['merged_signatures']:
-                    report.write("    - " + "\n    - ".join(result['merged_signatures']) + "\n")
+                    report.write("    - ".join(result['merged_signatures']) + "\n")
                 if result['skipped_signatures']:
                     report.write(f"Skipped Signatures (Due to Duplication): {' -'.join(result['skipped_signatures'])}\n")
                 report.write(f"Output File: {result['output_file'] if result['output_file'] else 'N/A'}\n")
