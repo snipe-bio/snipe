@@ -979,7 +979,7 @@ def process_experiment(args):
 @click.option('--trim-below-median', is_flag=True, default=False, help='Trim hashes below the median abundance.')
 @click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
 @click.option('--force', is_flag=True, default=False, help='Overwrite existing files in the output directory.')
-@click.option('-j', '--cores', type=int, default=1, help='Number of cores to use for processing experiments in parallel.')
+@click.option('--cores', type=int, default=1, help='Number of cores to use for processing experiments in parallel.')
 @click.pass_context
 def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
                 min_abund, max_abund, trim_below_median, debug, force, cores):
@@ -992,7 +992,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
 
     **Example:**
 
-        snipe ops guided-merge --table mapping.tsv --output-dir merged_sigs --reset-abundance --force
+        snipe ops guided-merge --table mapping.tsv --output-dir merged_sigs --reset-abundance --force --cores 4
 
     **Example Table File (`mapping.tsv`):**
 
