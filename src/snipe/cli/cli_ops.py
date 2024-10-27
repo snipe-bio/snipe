@@ -174,10 +174,6 @@ def load_signatures(sig_paths: List[str], logger: logging.Logger, allow_duplicat
     signatures = []
     loaded_paths = set()
     for path in sig_paths:
-        if not allow_duplicates and path in loaded_paths:
-            logger.warning(f"Duplicate signature file detected and skipped: {path}")
-            click.echo(f"Warning: Duplicate signature file detected and skipped: {path}", err=True)
-            continue
         try:
             logger.debug(f"Loading signature from: {path}")
             sig = SnipeSig(
@@ -883,7 +879,8 @@ def process_experiment(args):
 
     result = {
         'exp_name': exp_name,
-        'merged_signatures': [os.path.basename(p) for p in sig_paths],
+        'merged_signatures': [],       # To be populated after processing
+        'skipped_signatures': [],      # To store skipped duplicates
         'output_file': None,
         'status': 'success',
         'error': None
@@ -897,6 +894,38 @@ def process_experiment(args):
     except Exception as e:
         result['status'] = 'failure'
         result['error'] = str(e)
+        return result
+
+    # Duplicate Detection
+    try:
+        # Create a mapping from md5sum to list of signatures
+        md5_to_signatures = defaultdict(list)
+        for sig in signatures:
+            md5_to_signatures[sig.md5sum].append(sig)
+        
+        # Identify duplicates
+        unique_signatures = []
+        skipped_signatures = []
+        for md5, sig_list in md5_to_signatures.items():
+            if len(sig_list) > 1:
+                # Keep the first signature, skip the rest
+                unique_signatures.append(sig_list[0])
+                duplicates = sig_list[1:]
+                skipped_signatures.extend([os.path.basename(sig.name) for sig in duplicates])
+                logger.debug(f"Duplicate signatures detected for md5sum {md5}: {[sig.name for sig in duplicates]}")
+            else:
+                unique_signatures.append(sig_list[0])
+        
+        # Update the signatures list to only include unique signatures
+        signatures = unique_signatures
+
+        # Update the result with merged and skipped signatures
+        result['merged_signatures'] = [os.path.basename(sig.name) for sig in signatures]
+        result['skipped_signatures'] = skipped_signatures
+
+    except Exception as e:
+        result['status'] = 'failure'
+        result['error'] = f"Duplicate detection failed: {e}"
         return result
 
     # Apply operations
@@ -1092,6 +1121,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
                     results.append({
                         'exp_name': exp_name,
                         'merged_signatures': [os.path.basename(p) for p in experiment_mapping[exp_name]],
+                        'skipped_signatures': [],
                         'output_file': None,
                         'status': 'failure',
                         'error': str(e)
@@ -1102,25 +1132,39 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
             result = process_experiment(args)
             results.append(result)
 
-    # Write the report
-    report_file = os.path.join(output_dir, 'merge_report.csv')
+    # Write the structured report
+    report_file = os.path.join(output_dir, 'merge_report.txt')
 
-    with open(report_file, 'w', newline='') as csvfile:
-        # Changed fieldnames to include 'Merged Signatures' instead of 'Number of Signatures'
-        fieldnames = ['Experiment ID', 'Merged Signatures', 'Output File', 'Status', 'Error']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for result in results:
-            writer.writerow({
-                'Experiment ID': result['exp_name'],
-                # Use semicolon as delimiter to avoid conflict with CSV commas
-                'Merged Signatures': '; '.join(result['merged_signatures']),
-                'Output File': result['output_file'],
-                'Status': result['status'],
-                'Error': result['error']
-            })
+    try:
+        with open(report_file, 'w') as report:
+            report.write("Merge Report\n")
+            report.write("="*50 + "\n\n")
+            for result in results:
+                report.write(f"Experiment ID: {result['exp_name']}\n")
+                report.write("-"*50 + "\n")
+                report.write("Merged Signatures:\n")
+                if result['merged_signatures']:
+                    for sig in result['merged_signatures']:
+                        report.write(f"    - {sig}\n")
+                else:
+                    report.write("    None\n")
 
-    # Removed writing to 'failed_experiments.txt'
+                report.write("Skipped Signatures (Due to Duplication):\n")
+                if result['skipped_signatures']:
+                    for sig in result['skipped_signatures']:
+                        report.write(f"    - {sig}\n")
+                else:
+                    report.write("    None\n")
+
+                report.write(f"Output File: {result['output_file'] if result['output_file'] else 'N/A'}\n")
+                report.write(f"Status: {result['status'].capitalize()}\n")
+                if result['status'] == 'failure':
+                    report.write(f"Error: {result['error']}\n")
+                report.write("\n" + "-"*50 + "\n\n")
+    except Exception as e:
+        logger.error(f"Failed to write report file {report_file}: {e}")
+        click.echo(f"Error: Failed to write report file {report_file}: {e}", err=True)
+        sys.exit(1)
 
     # Summary Report
     total_experiments = len(results)
@@ -1129,11 +1173,16 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
         if r['status'] == 'success':
             successful_experiments += 1
     failed_experiments = total_experiments - successful_experiments
+    # total_skipped = sum(len(r.get('skipped_signatures', [])) for r in results)
+    total_skipped = 0
+    for r in results:
+        total_skipped += len(r.get('skipped_signatures', []))
 
     click.echo(f"\nGuided Merge Summary:")
     click.echo(f"\t- Total experiments processed: {total_experiments}")
     click.echo(f"\t- Successful experiments: {successful_experiments}")
     click.echo(f"\t- Failed experiments: {failed_experiments}")
+    click.echo(f"\t- Total signatures skipped due to duplication: {total_skipped}")
     click.echo(f"\t- Detailed report saved to {report_file}")
 
     click.echo(f"\nReport saved to {report_file}")
