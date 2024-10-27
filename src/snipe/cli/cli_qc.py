@@ -207,12 +207,15 @@ def process_subset(
     subset_failed = []
     for sample_path in subset:
         sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
-        subset_logger.debug(f"DELME Processing sample: {sample_sig.name}")
         if sample_sig.name == "":
             _newname = os.path.basename(sample_path).split('.')[0]
             sample_sig.name = _newname
+            print(sample_sig)
+            if len(sample_sig.hashes) == 0:
+                e_msg = f"Sample signature is empty. This might be coming from sketching reads with length < {sample_sig.ksize}, or super small sample."
+                raise ValueError(e_msg)
             subset_logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
-            
+
         try:
             sample_stats = qc_inst.process_sample(
                 sample_sig=sample_sig,

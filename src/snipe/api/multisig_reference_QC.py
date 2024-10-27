@@ -335,9 +335,9 @@ class MultiSigReferenceQC:
 
 
     def process_sample(self, sample_sig: SnipeSig, predict_extra_folds: Optional[List[int]] = None, advanced: Optional[bool] = False) -> Dict[str, Any]:
-        
+
         # ============= Attributes =============
-        
+
         # Initialize attributes
         sample_stats: Dict[str, Any] = {}
         genome_stats: Dict[str, Any] = {}
@@ -350,43 +350,34 @@ class MultiSigReferenceQC:
         chr_to_mean_abundance: Dict[str, np.float64] = {}
         predicted_assay_type: str = "WGS"
         roi_stats: Dict[str, Any] = {}
-        
-        
+
+
         # ============= SAMPLE Verification =============
-        
-        
+
+
         self.logger.debug("Validating ksize and scale across signatures.")
         if sample_sig.ksize != self.reference_sig.ksize:
-            self.logger.error("K-mer sizes do not match: sample_sig.ksize=%d vs reference_sig.ksize=%d",
-                              sample_sig.ksize, self.reference_sig.ksize)
+            self.logger.error("K-mer sizes do not match: sample_sig.ksize=%d vs reference_sig.ksize=%d", sample_sig.ksize, self.reference_sig.ksize)
             raise ValueError(f"sample_sig kszie ({sample_sig.ksize}) does not match reference_sig ksize ({self.reference_sig.ksize}).")
         if sample_sig.scale != self.reference_sig.scale:
-            self.logger.error("Scale values do not match: sample_sig.scale=%d vs reference_sig.scale=%d",
-                              sample_sig.scale, self.reference_sig.scale)
+            self.logger.error("Scale values do not match: sample_sig.scale=%d vs reference_sig.scale=%d", sample_sig.scale, self.reference_sig.scale)
             raise ValueError(f"sample_sig scale ({sample_sig.scale}) does not match reference_sig scale ({self.reference_sig.scale}).")
         
         if self.amplicon_sig is not None:
             if self.amplicon_sig.ksize != sample_sig.ksize:
-                self.logger.error("K-mer sizes do not match: amplicon_sig.ksize=%d vs sample_sig.ksize=%d",
-                                  self.amplicon_sig.ksize, sample_sig.ksize)
+                self.logger.error("K-mer sizes do not match: amplicon_sig.ksize=%d vs sample_sig.ksize=%d", self.amplicon_sig.ksize, sample_sig.ksize)
                 raise ValueError(f"amplicon_sig ksize ({self.amplicon_sig.ksize}) does not match sample_sig ksize ({sample_sig.ksize}).")
             if self.amplicon_sig.scale != sample_sig.scale:
-                self.logger.error("Scale values do not match: amplicon_sig.scale=%d vs sample_sig.scale=%d",
-                                  self.amplicon_sig.scale, sample_sig.scale)
+                self.logger.error("Scale values do not match: amplicon_sig.scale=%d vs sample_sig.scale=%d", self.amplicon_sig.scale, sample_sig.scale)
                 raise ValueError(f"amplicon_sig scale ({self.amplicon_sig.scale}) does not match sample_sig scale ({sample_sig.scale}).")
 
         self.logger.debug("All signatures have matching ksize and scale.")
-            
+
         # Verify signature types
         if sample_sig._type != SigType.SAMPLE:
             self.logger.error("Invalid signature type for sample_sig: %s | %s", sample_sig.sigtype, sample_sig._type)
             raise ValueError(f"sample_sig must be of type {SigType.SAMPLE}, got {sample_sig.sigtype}")
-        
-        if len(sample_sig) == 0:
-            e_msg = f"Sample signature is empty. This might be coming from sketching reads with length < {sample_sig.ksize}, or super small sample."
-            raise ValueError(e_msg)
 
-        
         # ============= SAMPLE STATS =============
 
         self.logger.debug("Processing sample statistics.")
@@ -731,26 +722,26 @@ class MultiSigReferenceQC:
         if self.variance_sigs:
             self.logger.debug("Consuming non-reference k-mers from provided variables.")
             self.logger.debug("\t-Current size of the sample signature: %d hashes.", len(sample_sig))
-            
+
             sample_nonref = sample_sig - self.reference_sig
 
             self.logger.debug("\tSize of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
             # sample_nonref.trim_singletons()
             self.logger.debug("\tSize of non-reference k-mers after trimming singletons: %d hashes.", len(sample_nonref))
-            
+
             sample_nonref_unique_hashes = len(sample_nonref)
             sample_nonref_total_abundance = sample_nonref.total_abundance
-            
+
             self.logger.debug("\t-Size of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
             if len(sample_nonref) == 0:
                 self.logger.warning("No non-reference k-mers found in the sample signature.")
                 return {}
-            
+
             # intersect and report coverage and depth, then subtract from sample_nonref so sum will be 100%
             for variance_sig in self.variance_sigs:
                 variance_name = variance_sig.name
                 sample_nonref_var: SnipeSig = sample_nonref & variance_sig
-                
+
                 if self.export_varsigs:
                     __sample_name = sample_sig.name.replace(' ','_')
                     __var_name = variance_name.replace(' ','_')
@@ -766,11 +757,11 @@ class MultiSigReferenceQC:
                     f"{variance_name} median abundance": sample_nonref.median_abundance,
                     f"{variance_name} fraction of total abundance": sample_nonref_var_fraction_total
                 })
-                
+
                 self.logger.debug("\t-Consuming non-reference k-mers from variable '%s'.", variance_name)
                 sample_nonref -= sample_nonref_var
                 self.logger.debug("\t-Size of remaining non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
-                
+
             vars_nonref_stats["unexplained variance total abundance"] = sample_nonref.total_abundance
             vars_nonref_stats["unexplained variance mean abundance"] = sample_nonref.mean_abundance
             vars_nonref_stats["unexplained variance median abundance"] = sample_nonref.median_abundance
