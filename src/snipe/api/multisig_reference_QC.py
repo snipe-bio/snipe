@@ -623,7 +623,8 @@ class MultiSigReferenceQC:
             # calculate the CV for the whole sample
             if autosomal_chr_to_mean_abundance:
                 mean_abundances = np.array(list(autosomal_chr_to_mean_abundance.values()), dtype=np.float64)
-                cv = np.std(mean_abundances) / np.mean(mean_abundances) if np.mean(mean_abundances) > 0 and not np.isnan(np.mean(mean_abundances)) else 0.0
+                mean = np.mean(mean_abundances)
+                cv = np.std(mean_abundances) / mean if mean > 0 and not np.isnan(mean) else 0.0
                 chrs_stats.update({"Autosomal k-mer mean abundance CV": cv})
                 self.logger.debug("Calculated Autosomal CV: %f", cv)
             else:

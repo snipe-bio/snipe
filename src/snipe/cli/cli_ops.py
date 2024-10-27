@@ -1118,6 +1118,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
                     result = future.result()
                     results.append(result)
                 except Exception as e:
+                    logger.exception(f"Processing of experiment '{exp_name}' failed with an exception.")
                     results.append({
                         'exp_name': exp_name,
                         'merged_signatures': [os.path.basename(p) for p in experiment_mapping[exp_name]],
@@ -1178,7 +1179,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
     for r in results:
         total_skipped += len(r.get('skipped_signatures', []))
 
-    click.echo(f"\nGuided Merge Summary:")
+    click.echo("\nGuided Merge Summary:")
     click.echo(f"\t- Total experiments processed: {total_experiments}")
     click.echo(f"\t- Successful experiments: {successful_experiments}")
     click.echo(f"\t- Failed experiments: {failed_experiments}")
