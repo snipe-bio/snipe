@@ -6,6 +6,9 @@ import logging
 from typing import List
 from collections import defaultdict
 import click
+import csv
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from snipe.api.enums import SigType
 from snipe.api.snipe_sig import SnipeSig
@@ -171,10 +174,6 @@ def load_signatures(sig_paths: List[str], logger: logging.Logger, allow_duplicat
     signatures = []
     loaded_paths = set()
     for path in sig_paths:
-        if not allow_duplicates and path in loaded_paths:
-            logger.warning(f"Duplicate signature file detected and skipped: {path}")
-            click.echo(f"Warning: Duplicate signature file detected and skipped: {path}", err=True)
-            continue
         try:
             logger.debug(f"Loading signature from: {path}")
             sig = SnipeSig(
@@ -869,7 +868,106 @@ def common(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         click.echo(f"Error: Failed to export common hashes signature: {e}", err=True)
         sys.exit(1)
 
-import csv
+def process_experiment(args):
+    exp_name, sig_paths, operations, output_dir, force, debug = args
+    # Create logger for this function
+    logger = logging.getLogger(f'process_experiment.{exp_name}')
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.CRITICAL)
+
+    result = {
+        'exp_name': exp_name,
+        'merged_signatures': [],       # To be populated after processing
+        'skipped_signatures': [],      # To store skipped duplicates
+        'output_file': None,
+        'status': 'success',
+        'error': None
+    }
+
+    # Load signatures
+    try:
+        signatures = load_signatures(sig_paths, logger, allow_duplicates=False)
+        if not signatures:
+            raise Exception(f"No valid signatures loaded for experiment '{exp_name}'.")
+    except Exception as e:
+        result['status'] = 'failure'
+        result['error'] = str(e)
+        return result
+
+    # Duplicate Detection
+    try:
+        # Create a mapping from md5sum to list of signatures
+        md5_to_signatures = defaultdict(list)
+        for sig in signatures:
+            md5_to_signatures[sig.md5sum].append(sig)
+        
+        # Identify duplicates
+        unique_signatures = []
+        skipped_signatures = []
+        for md5, sig_list in md5_to_signatures.items():
+            if len(sig_list) > 1:
+                # Keep the first signature, skip the rest
+                unique_signatures.append(sig_list[0])
+                duplicates = sig_list[1:]
+                skipped_signatures.extend([os.path.basename(sig.name) for sig in duplicates])
+                logger.debug(f"Duplicate signatures detected for md5sum {md5}: {[sig.name for sig in duplicates]}")
+            else:
+                unique_signatures.append(sig_list[0])
+        
+        # Update the signatures list to only include unique signatures
+        signatures = unique_signatures
+
+        # Update the result with merged and skipped signatures
+        result['merged_signatures'] = [os.path.basename(sig.name) for sig in signatures]
+        result['skipped_signatures'] = skipped_signatures
+
+    except Exception as e:
+        result['status'] = 'failure'
+        result['error'] = f"Duplicate detection failed: {e}"
+        return result
+
+    # Apply operations
+    try:
+        apply_operations(signatures, operations, logger)
+    except Exception as e:
+        result['status'] = 'failure'
+        result['error'] = str(e)
+        return result
+
+    # Sum signatures
+    try:
+        merged_signature = SnipeSig.sum_signatures(
+            signatures,
+            name=exp_name,
+            filename=None,
+            enable_logging=debug
+        )
+    except Exception as e:
+        result['status'] = 'failure'
+        result['error'] = f"Failed to merge signatures for experiment '{exp_name}': {e}"
+        return result
+
+    # Define output file path
+    output_file_path = os.path.join(output_dir, f"{exp_name}.zip")
+    result['output_file'] = output_file_path
+
+    # Check if output file exists
+    if os.path.exists(output_file_path) and not force:
+        result['status'] = 'failure'
+        result['error'] = f"Output file '{output_file_path}' already exists. Use --force to overwrite."
+        return result
+
+    # Export the merged signature
+    try:
+        merged_signature.export(output_file_path)
+    except Exception as e:
+        result['status'] = 'failure'
+        result['error'] = f"Failed to export merged signature for experiment '{exp_name}': {e}"
+        return result
+
+    return result
 
 @ops.command()
 @click.option('--table', '-t', type=click.Path(exists=True, dir_okay=False), required=True, help='Tabular file (CSV or TSV) with two columns: <signature_path> <experiment_name>')
@@ -881,9 +979,10 @@ import csv
 @click.option('--trim-below-median', is_flag=True, default=False, help='Trim hashes below the median abundance.')
 @click.option('--debug', is_flag=True, default=False, help='Enable debugging and detailed logging.')
 @click.option('--force', is_flag=True, default=False, help='Overwrite existing files in the output directory.')
+@click.option('--cores', type=int, default=1, help='Number of cores to use for processing experiments in parallel.')
 @click.pass_context
 def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
-                min_abund, max_abund, trim_below_median, debug, force):
+                min_abund, max_abund, trim_below_median, debug, force, cores):
     """
     Guide signature merging by groups.
 
@@ -893,7 +992,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
 
     **Example:**
 
-        snipe ops guided_merge --table mapping.tsv --output-dir merged_sigs --reset-abundance --force
+        snipe ops guided-merge --table mapping.tsv --output-dir merged_sigs --reset-abundance --force --cores 4
 
     **Example Table File (`mapping.tsv`):**
 
@@ -989,85 +1088,102 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
             click.echo(f"Error: Output path {output_dir} exists and is not a directory.", err=True)
             sys.exit(1)
 
-    # Process each experiment
-    summary = []
+    # Define operation context
+    operations = []
+    if reset_abundance:
+        operations.append(('reset_abundance', None))
+    if trim_singletons:
+        operations.append(('trim_singletons', None))
+    if min_abund is not None:
+        operations.append(('keep_min_abundance', min_abund))
+    if max_abund is not None:
+        operations.append(('keep_max_abundance', max_abund))
+    if trim_below_median:
+        operations.append(('trim_below_median', None))
+
+    # Prepare arguments for multiprocessing
+    experiments_args = []
     for exp_name, sig_paths in experiment_mapping.items():
-        logger.debug(f"Processing experiment '{exp_name}' with {len(sig_paths)} signatures.")
-        # Load signatures
-        signatures = load_signatures(sig_paths, logger, allow_duplicates=False)
-        if not signatures:
-            logger.warning(f"No valid signatures loaded for experiment '{exp_name}'. Skipping.")
-            continue
+        experiments_args.append((exp_name, sig_paths, operations, output_dir, force, debug))
 
-        # Define operation context
-        operations = []
-        if reset_abundance:
-            operations.append(('reset_abundance', None))
-        if trim_singletons:
-            operations.append(('trim_singletons', None))
-        if min_abund is not None:
-            operations.append(('keep_min_abundance', min_abund))
-        if max_abund is not None:
-            operations.append(('keep_max_abundance', max_abund))
-        if trim_below_median:
-            operations.append(('trim_below_median', None))
+    # Process experiments with multiprocessing
+    results = []
 
-        logger.debug(f"Operations to apply for experiment '{exp_name}': {operations}")
+    if cores > 1:
+        with ProcessPoolExecutor(max_workers=cores) as executor:
+            future_to_exp = {executor.submit(process_experiment, args): args[0] for args in experiments_args}
+            for future in tqdm(as_completed(future_to_exp), total=len(future_to_exp), desc="Processing experiments"):
+                exp_name = future_to_exp[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    logger.exception(f"Processing of experiment '{exp_name}' failed with an exception.")
+                    results.append({
+                        'exp_name': exp_name,
+                        'merged_signatures': [os.path.basename(p) for p in experiment_mapping[exp_name]],
+                        'skipped_signatures': [],
+                        'output_file': None,
+                        'status': 'failure',
+                        'error': str(e)
+                    })
+    else:
+        # Sequential processing
+        for args in tqdm(experiments_args, desc="Processing experiments"):
+            result = process_experiment(args)
+            results.append(result)
 
-        # Apply operations
-        apply_operations(signatures, operations, logger)
+    # Write the structured report
+    report_file = os.path.join(output_dir, 'merge_report.txt')
 
-        # Sum signatures
-        try:
-            merged_signature = SnipeSig.sum_signatures(
-                signatures,
-                name=exp_name,
-                filename=None,
-                enable_logging=debug
-            )
-            logger.debug(f"Merged signature created for experiment '{exp_name}' with name '{merged_signature.name}'.")
-        except Exception as e:
-            logger.error(f"Failed to merge signatures for experiment '{exp_name}': {e}")
-            click.echo(f"Error: Failed to merge signatures for experiment '{exp_name}': {e}", err=True)
-            continue
+    try:
+        with open(report_file, 'w') as report:
+            report.write("Merge Report\n")
+            report.write("="*50 + "\n\n")
+            for result in results:
+                report.write(f"Experiment ID: {result['exp_name']}\n")
+                report.write("-"*50 + "\n")
+                report.write("Merged Signatures:\n")
+                if result['merged_signatures']:
+                    for sig in result['merged_signatures']:
+                        report.write(f"    - {sig}\n")
+                else:
+                    report.write("    None\n")
 
-        # Define output file path
-        output_file_path = os.path.join(output_dir, f"{exp_name}.zip")
+                report.write("Skipped Signatures (Due to Duplication):\n")
+                if result['skipped_signatures']:
+                    for sig in result['skipped_signatures']:
+                        report.write(f"    - {sig}\n")
+                else:
+                    report.write("    None\n")
 
-        # Check if output file exists
-        if os.path.exists(output_file_path) and not force:
-            logger.error(f"Output file '{output_file_path}' already exists. Use --force to overwrite.")
-            click.echo(f"Error: Output file '{output_file_path}' already exists. Use --force to overwrite.", err=True)
-            continue
-
-        # Export the merged signature
-        try:
-            merged_signature.export(output_file_path)
-            click.echo(f"Merged signature for experiment '{exp_name}' exported to {output_file_path}")
-            logger.info(f"Merged signature for experiment '{exp_name}' exported to {output_file_path}")
-            summary.append((exp_name, len(sig_paths), output_file_path))
-        except FileExistsError:
-            logger.error(f"Output file '{output_file_path}' already exists. Use --force to overwrite.")
-            click.echo(f"Error: Output file '{output_file_path}' already exists. Use --force to overwrite.", err=True)
-            continue
-        except Exception as e:
-            logger.error(f"Failed to export merged signature for experiment '{exp_name}': {e}")
-            click.echo(f"Error: Failed to export merged signature for experiment '{exp_name}': {e}", err=True)
-            continue
+                report.write(f"Output File: {result['output_file'] if result['output_file'] else 'N/A'}\n")
+                report.write(f"Status: {result['status'].capitalize()}\n")
+                if result['status'] == 'failure':
+                    report.write(f"Error: {result['error']}\n")
+                report.write("\n" + "-"*50 + "\n\n")
+    except Exception as e:
+        logger.error(f"Failed to write report file {report_file}: {e}")
+        click.echo(f"Error: Failed to write report file {report_file}: {e}", err=True)
+        sys.exit(1)
 
     # Summary Report
-    click.echo("\nGuided Merge Summary:")
-    click.echo(f"Total signatures mapped in table: {total_mapped}")
-    click.echo(f"Valid signatures processed: {total_valid}")
-    click.echo(f"Invalid or missing signatures skipped: {total_invalid}")
-    if invalid_files:
-        click.echo("List of invalid or missing signature files:")
-        for invalid in invalid_files:
-            click.echo(f" - {invalid}")
-    click.echo(f"Total experiments merged: {len(summary)}")
-    for exp_name, count, path in summary:
-        click.echo(f" - Experiment '{exp_name}': {count} signatures merged into {path}")
+    total_experiments = len(results)
+    successful_experiments = 0
+    for r in results:
+        if r['status'] == 'success':
+            successful_experiments += 1
+    failed_experiments = total_experiments - successful_experiments
+    # total_skipped = sum(len(r.get('skipped_signatures', [])) for r in results)
+    total_skipped = 0
+    for r in results:
+        total_skipped += len(r.get('skipped_signatures', []))
 
-    if len(summary) < len(experiment_mapping):
-        skipped = len(experiment_mapping) - len(summary)
-        click.echo(f"Skipped {skipped} experiments due to errors or missing signatures.")
+    click.echo("\nGuided Merge Summary:")
+    click.echo(f"\t- Total experiments processed: {total_experiments}")
+    click.echo(f"\t- Successful experiments: {successful_experiments}")
+    click.echo(f"\t- Failed experiments: {failed_experiments}")
+    click.echo(f"\t- Total signatures skipped due to duplication: {total_skipped}")
+    click.echo(f"\t- Detailed report saved to {report_file}")
+
+    click.echo(f"\nReport saved to {report_file}")

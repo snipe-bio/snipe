@@ -407,13 +407,6 @@ class MultiSigReferenceQC:
         # Compute intersection of sample and reference genome
         self.logger.debug("Type of sample_sig: %s | Type of reference_sig: %s", sample_sig.sigtype, self.reference_sig.sigtype)
         sample_genome = sample_sig & self.reference_sig
-        # Get stats (call get_sample_stats only once)
-
-        # Log hashes and abundances for both sample and reference
-        # self.logger.debug("Sample hashes: %s", self.sample_sig.hashes)
-        # self.logger.debug("Sample abundances: %s", self.sample_sig.abundances)
-        # self.logger.debug("Reference hashes: %s", self.reference_sig.hashes)
-        # self.logger.debug("Reference abundances: %s", self.reference_sig.abundances)
 
         sample_genome_stats = sample_genome.get_sample_stats
 
@@ -422,14 +415,14 @@ class MultiSigReferenceQC:
             "Genomic k-mers total abundance": sample_genome_stats["total_abundance"],
             "Genomic k-mers mean abundance": sample_genome_stats["mean_abundance"],
             "Genomic k-mers median abundance": sample_genome_stats["median_abundance"],
-            # Genome coverage index
+
             "Genome coverage index": (
                 sample_genome_stats["num_hashes"] / len(self.reference_sig)
-                if len(self.reference_sig) > 0 else 0
+                if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
             ),
             "Mapping index": (
                 sample_genome_stats["total_abundance"] / sample_stats["k-mer total abundance"]
-                if sample_stats["k-mer total abundance"] > 0 else 0
+                if sample_stats.get("k-mer total abundance", 0) > 0 and sample_genome_stats["total_abundance"] is not None else 0
             ),
         })
 
@@ -461,18 +454,21 @@ class MultiSigReferenceQC:
                 "Amplicon k-mers median abundance": sample_amplicon_stats["median_abundance"],
                 "Amplicon coverage index": (
                     sample_amplicon_stats["num_hashes"] / len(self.amplicon_sig)
-                    if len(self.amplicon_sig) > 0 else 0
+                        if len(self.amplicon_sig) > 0 and sample_amplicon_stats["num_hashes"] is not None else 0
                 ),
             })
 
             # ============= RELATIVE STATS =============
             amplicon_stats["Relative total abundance"] = (
-                amplicon_stats["Amplicon k-mers total abundance"] / genome_stats["Genomic k-mers total abundance"]
-                if genome_stats["Genomic k-mers total abundance"] > 0 else 0
+            amplicon_stats["Amplicon k-mers total abundance"] / genome_stats["Genomic k-mers total abundance"]
+            if genome_stats.get("Genomic k-mers total abundance", 0) > 0 and 
+            amplicon_stats.get("Amplicon k-mers total abundance") is not None else 0
             )
+
             amplicon_stats["Relative coverage"] = (
                 amplicon_stats["Amplicon coverage index"] / genome_stats["Genome coverage index"]
-                if genome_stats["Genome coverage index"] > 0 else 0
+                if genome_stats.get("Genome coverage index", 0) > 0 and 
+                amplicon_stats.get("Amplicon coverage index") is not None else 0
             )
 
             relative_total_abundance = amplicon_stats["Relative total abundance"]
@@ -500,8 +496,15 @@ class MultiSigReferenceQC:
             sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
             sample_total_abundance = sample_sig.total_abundance
             
-            predicted_error_index = sample_nonref_singletons / sample_total_abundance
-            predicted_contamination_index = sample_nonref_non_singletons / sample_total_abundance
+            predicted_error_index = (
+                sample_nonref_singletons / sample_total_abundance
+                if sample_total_abundance is not None and sample_total_abundance > 0 else 0
+            )
+
+            predicted_contamination_index = (
+                sample_nonref_non_singletons / sample_total_abundance
+                if sample_total_abundance is not None and sample_total_abundance > 0 else 0
+            )
 
             # predict error and contamination index
             predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
@@ -536,8 +539,9 @@ class MultiSigReferenceQC:
                 "Median-trimmed Genomic median abundance": median_trimmed_sample_genome_stats["median_abundance"],
                 "Median-trimmed Genome coverage index": (
                     median_trimmed_sample_genome_stats["num_hashes"] / len(self.reference_sig)
-                    if len(self.reference_sig) > 0 else 0
+                    if len(self.reference_sig) > 0 and median_trimmed_sample_genome_stats.get("num_hashes") is not None else 0
                 ),
+
             })
 
             if self.amplicon_sig is not None:
@@ -552,19 +556,24 @@ class MultiSigReferenceQC:
                     "Median-trimmed Amplicon median abundance": median_trimmed_sample_amplicon_stats["median_abundance"],
                     "Median-trimmed Amplicon coverage index": (
                         median_trimmed_sample_amplicon_stats["num_hashes"] / len(self.amplicon_sig)
-                        if len(self.amplicon_sig) > 0 else 0
+                        if len(self.amplicon_sig) > 0 and median_trimmed_sample_amplicon_stats.get("num_hashes") is not None else 0
                     ),
+
                 })
                 # Additional advanced relative metrics
                 self.logger.debug("Calculating advanced relative metrics.")
                 amplicon_stats["Median-trimmed relative coverage"] = (
                     advanced_stats["Median-trimmed Amplicon coverage index"] / advanced_stats["Median-trimmed Genome coverage index"]
-                    if advanced_stats["Median-trimmed Genome coverage index"] > 0 else 0
+                    if advanced_stats.get("Median-trimmed Genome coverage index", 0) > 0 and 
+                    advanced_stats.get("Median-trimmed Amplicon coverage index") is not None else 0
                 )
+
                 amplicon_stats["Median-trimmed relative mean abundance"] = (
                     advanced_stats["Median-trimmed Amplicon mean abundance"] / advanced_stats["Median-trimmed Genomic mean abundance"]
-                    if advanced_stats["Median-trimmed Genomic mean abundance"] > 0 else 0
+                    if advanced_stats.get("Median-trimmed Genomic mean abundance", 0) > 0 and 
+                    advanced_stats.get("Median-trimmed Amplicon mean abundance") is not None else 0
                 )
+
                 # Update amplicon_stats with advanced metrics
                 amplicon_stats.update({
                     "Median-trimmed relative coverage": amplicon_stats["Median-trimmed relative coverage"],
@@ -614,7 +623,8 @@ class MultiSigReferenceQC:
             # calculate the CV for the whole sample
             if autosomal_chr_to_mean_abundance:
                 mean_abundances = np.array(list(autosomal_chr_to_mean_abundance.values()), dtype=np.float64)
-                cv = np.std(mean_abundances) / np.mean(mean_abundances) if np.mean(mean_abundances) != 0 else 0.0
+                mean = np.mean(mean_abundances)
+                cv = np.std(mean_abundances) / mean if mean > 0 and not np.isnan(mean) else 0.0
                 chrs_stats.update({"Autosomal k-mer mean abundance CV": cv})
                 self.logger.debug("Calculated Autosomal CV: %f", cv)
             else:
@@ -703,7 +713,10 @@ class MultiSigReferenceQC:
                     self.logger.warning("Insufficient k-mers for chrY Coverage score calculation. Setting chrY Coverage score to zero.")
                     ycoverage = 0.0
                 else:
-                    ycoverage = (len(ychr_in_sample) / len(ychr_specific_kmers)) / (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
+                    ycoverage = ((len(ychr_in_sample) / len(ychr_specific_kmers)) / (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
+                            if len(ychr_specific_kmers) > 0 and len(autosomals_specific_kmers) > 0 else 0
+                        )
+
                 
                 self.logger.debug("Calculated chrY Coverage score: %.4f", ycoverage)
                 sex_stats.update({"chrY Coverage score": ycoverage})
@@ -757,7 +770,11 @@ class MultiSigReferenceQC:
             vars_nonref_stats["unexplained variance total abundance"] = sample_nonref.total_abundance
             vars_nonref_stats["unexplained variance mean abundance"] = sample_nonref.mean_abundance
             vars_nonref_stats["unexplained variance median abundance"] = sample_nonref.median_abundance
-            vars_nonref_stats["unexplained variance fraction of total abundance"] = sample_nonref.total_abundance / sample_nonref_total_abundance if sample_nonref_total_abundance > 0 else 0.0
+            vars_nonref_stats["unexplained variance fraction of total abundance"] = (
+            sample_nonref.total_abundance / sample_nonref_total_abundance
+                if sample_nonref_total_abundance > 0 and sample_nonref.total_abundance is not None else 0.0
+            )
+
             
             self.logger.debug(
                 "After consuming all vars from the non reference k-mers, the size of the sample signature is: %d hashes, "

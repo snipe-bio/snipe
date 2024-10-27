@@ -99,13 +99,14 @@ jobs:
       - name: Extract Version from __init__.py
         id: extract_version
         run: |
-            VERSION=$(python -c "import re; 
-            import pathlib; 
-            init_file = pathlib.Path('src/snipe/__init__.py'); 
-            content = init_file.read_text(); 
-            match = re.search(r'__version__\s*=\s*[\'\"]([^\'\"]+)[\'\"]', content); 
+            VERSION=$(python -c "import re; \
+            import pathlib; \
+            init_file = pathlib.Path('src/snipe/__init__.py'); \
+            content = init_file.read_text(); \
+            match = re.search(r'__version__\s*=\s*[\'\"]([^\'\"]+)[\'\"]', content); \
             print(match.group(1) if match else '0.0.0')")
             echo "VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Build package
         run: |
           hatch build
@@ -130,8 +131,5 @@ jobs:
         with:
           tag: "v${{ env.VERSION }}"
           name: "v${{ env.VERSION }}"
-          body: |
-            Release version ${{ env.VERSION }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+          generateReleaseNotes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
