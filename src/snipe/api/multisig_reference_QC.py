@@ -750,7 +750,11 @@ class MultiSigReferenceQC:
                     sample_nonref_var.export(__filename)
 
                 sample_nonref_var_total_abundance = sample_nonref_var.total_abundance
-                sample_nonref_var_fraction_total = sample_nonref_var_total_abundance / sample_nonref_total_abundance
+                sample_nonref_var_fraction_total = (
+                    sample_nonref_var_total_abundance / sample_nonref_total_abundance
+                    if sample_nonref_total_abundance > 0 and sample_nonref_var_total_abundance is not None else 0.0
+                )
+
                 vars_nonref_stats.update({
                     f"{variance_name} total k-mer abundance": sample_nonref_var_total_abundance,
                     f"{variance_name} mean abundance": sample_nonref.mean_abundance,
@@ -872,10 +876,13 @@ class MultiSigReferenceQC:
 
                 # Saturation model function
                 def saturation_model(x, a, b):
-                    return a * x / (b + x)
+                    return a * x / (b + x) if b + x != 0 else 0
 
                 # Initial parameter guesses
-                initial_guess = [y_data[-1], x_data[int(len(x_data) / 2)]]
+                initial_guess = [
+                    y_data[-1] if len(y_data) > 0 else 0, 
+                    x_data[int(len(x_data) / 2)] if len(x_data) > 0 else 0
+                ]
 
                 # Fit the model to the data
                 try:
