@@ -784,7 +784,7 @@ class MultiSigReferenceQC:
 
         # ============= Coverage Prediction (ROI) =============
         
-        if predict_extra_folds:
+        if predict_extra_folds and genome_stats["Genome coverage index"]:
             predicted_fold_coverage = {}
             predicted_fold_delta_coverage = {}
             nparts = 30
@@ -797,6 +797,7 @@ class MultiSigReferenceQC:
 
             # Get sample signature intersected with the reference
             _sample_sig_genome = sample_sig & self.reference_sig
+            
             hashes = _sample_sig_genome.hashes
             abundances = _sample_sig_genome.abundances
             N = len(hashes)
@@ -929,6 +930,9 @@ class MultiSigReferenceQC:
             # Update the ROI stats
             roi_stats.update(predicted_fold_coverage)
             roi_stats.update(predicted_fold_delta_coverage)
+        
+        else:
+            self.logger.warning("Skipping ROI prediction due to zero Genomic Coverage Index.")
                 
         # ============= Merging all stats in one dictionary =============
         aggregated_stats = {}

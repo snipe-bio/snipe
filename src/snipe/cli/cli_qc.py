@@ -830,6 +830,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     df = df[df["Total unique k-mers"] != 0]
     logger.warning(f"Empty sigs not processed: {len(df_zero_uniqe_hashes)}: {', '.join(df_zero_uniqe_hashes['filename'])}")
     
+    # fill na by zero
+    df.fillna(0, inplace=True)
+    
     try:
         with open(output, 'w', encoding='utf-8') as f:
             header_dict = {"snipe-version": __version__, "metadata": metadata_str}
