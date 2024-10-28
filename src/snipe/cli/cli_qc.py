@@ -98,7 +98,11 @@ def validate_tsv_file(ctx, param, value: str) -> str:
 
 
 def split_chunks(lst: List[str], n: int) -> List[List[str]]:
-    """Splits the list `lst` into `n` nearly equal chunks."""
+    """Splits the list `lst` into `n` nearly equal chunks. If n is zero or greater than the list length, returns the entire list as one chunk."""
+    if n <= 0:
+        n = 1
+    if n > len(lst):
+        n = len(lst)
     k, m = divmod(len(lst), n)
     return [lst[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n)]
 

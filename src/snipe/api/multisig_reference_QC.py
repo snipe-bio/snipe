@@ -393,7 +393,11 @@ class MultiSigReferenceQC:
             "k-mer median abundance": sample_stats_raw["median_abundance"],
             "singleton k-mers": sample_stats_raw["num_singletons"],
             "snipe bases": sample_stats_raw["snipe_bases"],
-            "k-mer-to-bases ratio": ((sample_stats_raw["total_abundance"] * sample_stats_raw["scale"]) / sample_stats_raw["snipe_bases"]) if sample_stats_raw["snipe_bases"] > 0 else "",
+            "k-mer-to-bases ratio": (
+                (sample_stats_raw["total_abundance"] * sample_stats_raw["scale"]) / sample_stats_raw["snipe_bases"]
+                if sample_stats_raw["snipe_bases"] > 0 else 0
+            ),
+
         })
 
         # ============= GENOME STATS =============
@@ -485,29 +489,26 @@ class MultiSigReferenceQC:
         # ============= Contamination/Error STATS =============
         
         self.logger.debug("Calculuating error and contamination indices.")
-        try:
-            sample_nonref = sample_sig - self.reference_sig
-            sample_nonref_singletons = sample_nonref.count_singletons()
-            sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
-            sample_total_abundance = sample_sig.total_abundance
-            
-            predicted_error_index = (
-                sample_nonref_singletons / sample_total_abundance
-                if sample_total_abundance is not None and sample_total_abundance > 0 else 0
-            )
+    
+        sample_nonref = sample_sig - self.reference_sig
+        sample_nonref_singletons = sample_nonref.count_singletons()
+        sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
+        sample_total_abundance = sample_sig.total_abundance
+        
+        predicted_error_index = (
+            sample_nonref_singletons / sample_total_abundance
+            if sample_total_abundance is not None and sample_total_abundance > 0 else 0
+        )
 
-            predicted_contamination_index = (
-                sample_nonref_non_singletons / sample_total_abundance
-                if sample_total_abundance is not None and sample_total_abundance > 0 else 0
-            )
+        predicted_contamination_index = (
+            sample_nonref_non_singletons / sample_total_abundance
+            if sample_total_abundance is not None and sample_total_abundance > 0 else 0
+        )
 
-            # predict error and contamination index
-            predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
-            predicted_error_contamination_index["Sequencing errors index"] = predicted_error_index
-        # except zero division error
-        except ZeroDivisionError:
-            self.logger.error("Please check the sample signature, it seems to be empty.")
-            
+        # predict error and contamination index
+        predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
+        predicted_error_contamination_index["Sequencing errors index"] = predicted_error_index
+
         
         # ============= Advanced Stats if needed =============
         if advanced:
