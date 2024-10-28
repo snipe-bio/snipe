@@ -70,14 +70,14 @@ class MetadataSerializer:
             raise ValueError(f"Checksum computation failed: {e}") from e
 
     def export_and_verify_metadata(self, metadata: Dict[str, Any]) -> Tuple[str, str]:
-        self.logger.info("Exporting metadata...")
+        self.logger.debug("Exporting metadata...")
         metadata_str = self.serialize_metadata(metadata)
         checksum = self.compute_checksum(metadata)
         deserialized_metadata = self.deserialize_metadata(metadata_str)
         if deserialized_metadata != metadata:
             self.logger.error("Failed to serialize and deserialize metadata correctly.")
             sys.exit(1)
-        self.logger.info("Metadata serialized and deserialized successfully.")
+        self.logger.debug("Metadata serialized and deserialized successfully.")
         return metadata_str, checksum
 
 
