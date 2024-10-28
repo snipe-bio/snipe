@@ -885,7 +885,7 @@ class MultiSigReferenceQC:
 
                 # Saturation model function
                 def saturation_model(x, a, b):
-                    return a * x / (b + x) if b + x != 0 else 0
+                    return np.where((b + x) != 0, a * x / (b + x), 0)
 
                 # Initial parameter guesses
                 initial_guess = [
