@@ -401,7 +401,7 @@ class MultiSigReferenceQC:
         })
 
         # ============= GENOME STATS =============
-        
+
         self.logger.debug("Calculating genome statistics.")
         # Compute intersection of sample and reference genome
         self.logger.debug("Type of sample_sig: %s | Type of reference_sig: %s", sample_sig.sigtype, self.reference_sig.sigtype)
@@ -480,21 +480,21 @@ class MultiSigReferenceQC:
                 distance_to_wgs = abs(relative_total_abundance - self.relative_total_abundance_grey_zone[0])
                 distance_to_wxs = abs(relative_total_abundance - self.relative_total_abundance_grey_zone[1])
                 predicted_assay_type = "WGS" if distance_to_wgs < distance_to_wxs else "WXS"
-            
+
             self.logger.debug("Predicted assay type: %s", predicted_assay_type)
         
         else:
             self.logger.debug("No amplicon signature provided.")
         
         # ============= Contamination/Error STATS =============
-        
+
         self.logger.debug("Calculuating error and contamination indices.")
-    
+
         sample_nonref = sample_sig - self.reference_sig
         sample_nonref_singletons = sample_nonref.count_singletons()
         sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
         sample_total_abundance = sample_sig.total_abundance
-        
+
         predicted_error_index = (
             sample_nonref_singletons / sample_total_abundance
             if sample_total_abundance is not None and sample_total_abundance > 0 else 0
@@ -577,7 +577,7 @@ class MultiSigReferenceQC:
                 })
 
                 advanced_stats.update(amplicon_stats)
-                
+
         # ============= CHR STATS =============
         
         def sort_chromosomes(chrom_dict):
@@ -681,7 +681,10 @@ class MultiSigReferenceQC:
                 self.logger.warning("Autosomal mean abundance is zero. Setting chrX Ploidy score to zero to avoid division by zero.")
                 xploidy_score = 0.0
             else:
-                xploidy_score = (xchr_mean_abundance / autosomal_mean_abundance) if len(specific_xchr_sig) > 0 else 0.0
+                xploidy_score = (
+                    (xchr_mean_abundance / autosomal_mean_abundance)
+                    if len(specific_xchr_sig) > 0 and autosomal_mean_abundance > 0 else 0.0
+                )
 
             self.logger.debug("Calculated chrX Ploidy score: %.4f", xploidy_score)
             sex_stats.update({"chrX Ploidy score": xploidy_score})
@@ -709,9 +712,13 @@ class MultiSigReferenceQC:
                     self.logger.warning("Insufficient k-mers for chrY Coverage score calculation. Setting chrY Coverage score to zero.")
                     ycoverage = 0.0
                 else:
-                    ycoverage = ((len(ychr_in_sample) / len(ychr_specific_kmers)) / (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
-                            if len(ychr_specific_kmers) > 0 and len(autosomals_specific_kmers) > 0 else 0
+                    try:
+                        ycoverage = (
+                            (len(ychr_in_sample) / len(ychr_specific_kmers)) / 
+                            (len(sample_autosomal_sig) / len(autosomals_specific_kmers))
                         )
+                    except (ZeroDivisionError, TypeError):
+                        ycoverage = 0.0
 
                 
                 self.logger.debug("Calculated chrY Coverage score: %.4f", ycoverage)
@@ -771,7 +778,7 @@ class MultiSigReferenceQC:
             vars_nonref_stats["unexplained variance mean abundance"] = sample_nonref.mean_abundance
             vars_nonref_stats["unexplained variance median abundance"] = sample_nonref.median_abundance
             vars_nonref_stats["unexplained variance fraction of total abundance"] = (
-            sample_nonref.total_abundance / sample_nonref_total_abundance
+                sample_nonref.total_abundance / sample_nonref_total_abundance
                 if sample_nonref_total_abundance > 0 and sample_nonref.total_abundance is not None else 0.0
             )
 
@@ -785,7 +792,7 @@ class MultiSigReferenceQC:
 
         # ============= Coverage Prediction (ROI) =============
         
-        if predict_extra_folds and genome_stats["Genome coverage index"]:
+        if predict_extra_folds and genome_stats["Genome coverage index"] > 0.01:
             predicted_fold_coverage = {}
             predicted_fold_delta_coverage = {}
             nparts = 30
@@ -798,7 +805,7 @@ class MultiSigReferenceQC:
 
             # Get sample signature intersected with the reference
             _sample_sig_genome = sample_sig & self.reference_sig
-            
+
             hashes = _sample_sig_genome.hashes
             abundances = _sample_sig_genome.abundances
             N = len(hashes)

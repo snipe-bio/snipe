@@ -1449,11 +1449,8 @@ class SnipeSig:
             int: Total abundance.
         """
         self._validate_abundance_operation(None, "calculate total abundance")
-
-        total = self.total_abundance
-        if total == 0:
-            self.logger.error("Total abundance is zero, which may lead to division by zero.")
-            raise ZeroDivisionError("Total abundance is zero.")
+        total = int(np.sum(self._abundances))
+        self.logger.debug("Total abundance: %d", total)
         return total
 
     @property
