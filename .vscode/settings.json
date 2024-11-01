@@ -2,11 +2,4 @@
     "python.analysis.extraPaths": [
         "./src"
     ],
-    "cSpell.words": [
-        "AMPLICON", "signame",
-    ]
-    // # show line numbers in jupyter notebooks
-    // "jupyter.lineNumbers": "on",
-    // # show line numbers in jup
-
 }

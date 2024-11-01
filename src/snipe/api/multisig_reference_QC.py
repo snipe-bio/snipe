@@ -591,7 +591,8 @@ class MultiSigReferenceQC:
                 self.logger.debug("Intersecting %s (%d) with %s (%d)", sample_sig.name, len(sample_sig), chr_name, len(chr_sig))
                 chr_sample_sig = sample_sig & chr_sig
                 chr_stats = chr_sample_sig.get_sample_stats
-                chr_to_mean_abundance[chr_name] = chr_stats["mean_abundance"]
+                #! TODO: REMOVE LATER
+                chr_to_mean_abundance[chr_name] = chr_sample_sig.total_abundance / len(chr_sig)  # chr_stats["mean_abundance"]
                 self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
 
             # Create a new dictionary with sorted chromosome names and prefixed with 'chr-'
@@ -669,12 +670,14 @@ class MultiSigReferenceQC:
             if len(sample_specific_xchr_sig) == 0:
                 self.logger.warning("No X chromosome-specific k-mers found in the sample signature.")
             self.logger.debug("\t-Intersected sample signature with X chromosome-specific k-mers = %d hashes.", len(sample_specific_xchr_sig))
-            sample_autosomal_sig = sample_sig & autosomals_genome_sig
+            sample_autosomal_sig = sample_sig & autosomals_genome_sig #! ( GENOME - SEX - MITO )
             self.logger.debug("\t-Intersected sample signature with autosomal genome k-mers = %d hashes.", len(sample_autosomal_sig))
             
             # Retrieve mean abundances
-            xchr_mean_abundance = sample_specific_xchr_sig.get_sample_stats.get("mean_abundance", 0.0)
-            autosomal_mean_abundance = sample_autosomal_sig.get_sample_stats.get("mean_abundance", 0.0)
+            xchr_mean_abundance = sample_specific_xchr_sig.total_abundance/ len(self.specific_chr_to_sig['sex-x']) if len(sample_specific_xchr_sig) > 0 else 0.0
+            autosomal_mean_abundance = np.mean(list(autosomal_chr_to_mean_abundance.values())) if len(sample_autosomal_sig) > 0 else 0.0
+            #! TODO: REMOVE LATER
+            # autosomal_mean_abundance = sample_autosomal_sig.mean_abundance if len(sample_autosomal_sig) > 0 else 0.0
             
             # Calculate chrX Ploidy score
             if autosomal_mean_abundance == 0:
