@@ -2,4 +2,5 @@
     "python.analysis.extraPaths": [
         "./src"
     ],
+    "cmake.sourceDirectory": "/Users/mabuelanin/dev/snipe/_bioconda-recipes/recipes/megadepth",
 }

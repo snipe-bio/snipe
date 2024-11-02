@@ -591,8 +591,7 @@ class MultiSigReferenceQC:
                 self.logger.debug("Intersecting %s (%d) with %s (%d)", sample_sig.name, len(sample_sig), chr_name, len(chr_sig))
                 chr_sample_sig = sample_sig & chr_sig
                 chr_stats = chr_sample_sig.get_sample_stats
-                #! TODO: REMOVE LATER
-                chr_to_mean_abundance[chr_name] = chr_sample_sig.total_abundance / len(chr_sig)  # chr_stats["mean_abundance"]
+                chr_to_mean_abundance[chr_name] = chr_sample_sig.total_abundance / len(chr_sig)
                 self.logger.debug("\t-Mean abundance for %s: %f", chr_name, chr_stats["mean_abundance"])
 
             # Create a new dictionary with sorted chromosome names and prefixed with 'chr-'
@@ -631,67 +630,60 @@ class MultiSigReferenceQC:
             
             # ============= SEX STATS =============
             
-            # Ensure that the chromosome X signature exists
-            
-            self.logger.debug("Length of genome before subtracting sex chromosomes %s", len(self.reference_sig))
-            autosomals_genome_sig = self.reference_sig.copy()
-            for chr_name, chr_sig in self.specific_chr_to_sig.items():
-                if "sex" in chr_name.lower() or "mitochondrial" in chr_name.lower():
-                    self.logger.debug("Removing %s chromosome from the autosomal genome signature.", chr_name)
-                    self.logger.debug("Length of autosomals_genome_sig: %s | Length of chr_sig: %s", len(autosomals_genome_sig), len(chr_sig))
-                    autosomals_genome_sig -= chr_sig
-            self.logger.debug("Length of genome after subtracting sex chromosomes %s", len(autosomals_genome_sig))
-            
-            if 'sex-x' not in self.specific_chr_to_sig:
-                self.logger.warning("Chromosome X ('sex-x') not found in the provided signatures. chrX Ploidy score will be set to zero.")
-                # set sex-x to an empty signature
-                self.specific_chr_to_sig['sex-x'] = SnipeSig.create_from_hashes_abundances(
-                    hashes=np.array([], dtype=np.uint64),
-                    abundances=np.array([], dtype=np.uint32),
-                    ksize= self.specific_chr_to_sig[list( self.specific_chr_to_sig.keys())[0]].ksize,
-                    scale= self.specific_chr_to_sig[list( self.specific_chr_to_sig.keys())[0]].scale,
-                )
-            else:
-                self.logger.debug("X chromosome ('sex-x') detected.")
+            # condition to see if there is partial lower(sex) match in the chromosome names
+            if 'sex-x' in self.specific_chr_to_sig:
+                self.logger.debug("Length of genome before subtracting sex chromosomes %s", len(self.reference_sig))
+                autosomals_genome_sig = self.reference_sig.copy()
+                for chr_name, chr_sig in self.specific_chr_to_sig.items():
+                    if "sex" in chr_name.lower() or "mitochondrial" in chr_name.lower():
+                        self.logger.debug("Removing %s chromosome from the autosomal genome signature.", chr_name)
+                        self.logger.debug("Length of autosomals_genome_sig: %s | Length of chr_sig: %s", len(autosomals_genome_sig), len(chr_sig))
+                        autosomals_genome_sig -= chr_sig
+                self.logger.debug("Length of genome after subtracting sex chromosomes %s", len(autosomals_genome_sig))
                 
-            
-            # Separate the autosomal genome signature from chromosome-specific signatures
+                # if 'sex-x' not in self.specific_chr_to_sig:
+                #     self.logger.warning("Chromosome X ('sex-x') not found in the provided signatures. chrX Ploidy score will be set to zero.")
+                #     # set sex-x to an empty signature
+                #     self.specific_chr_to_sig['sex-x'] = SnipeSig.create_from_hashes_abundances(
+                #         hashes=np.array([], dtype=np.uint64),
+                #         abundances=np.array([], dtype=np.uint32),
+                #         ksize= self.specific_chr_to_sig[list( self.specific_chr_to_sig.keys())[0]].ksize,
+                #         scale= self.specific_chr_to_sig[list( self.specific_chr_to_sig.keys())[0]].scale,
+                #     )
+                # else:
+                #     self.logger.debug("X chromosome ('sex-x') detected.")
+                
+                # Derive the X chromosome-specific signature by subtracting autosomal genome hashes
+                specific_xchr_sig = self.specific_chr_to_sig["sex-x"] - autosomals_genome_sig
+                self.logger.debug("\t-Derived X chromosome-specific signature size: %d hashes.", len(specific_xchr_sig))
+                
+                # Intersect the sample signature with chromosome-specific signatures
+                sample_specific_xchr_sig = sample_sig & self.specific_chr_to_sig['sex-x']
+                if len(sample_specific_xchr_sig) == 0:
+                    self.logger.warning("No X chromosome-specific k-mers found in the sample signature.")
+                self.logger.debug("\t-Intersected sample signature with X chromosome-specific k-mers = %d hashes.", len(sample_specific_xchr_sig))
+                sample_autosomal_sig = sample_sig & autosomals_genome_sig #! ( GENOME - SEX - MITO )
+                self.logger.debug("\t-Intersected sample signature with autosomal genome k-mers = %d hashes.", len(sample_autosomal_sig))
+                
+                # Retrieve mean abundances
+                xchr_mean_abundance = sample_specific_xchr_sig.total_abundance/ len(self.specific_chr_to_sig['sex-x']) if len(sample_specific_xchr_sig) > 0 else 0.0
+                autosomal_mean_abundance = np.mean(list(autosomal_chr_to_mean_abundance.values())) if len(sample_autosomal_sig) > 0 else 0.0
 
-            #! autosomal sig for now is the all of the genome minus sex chrs
-            self.logger.debug("Separating autosomal genome signature from chromosome-specific signatures.")
-            
-            
-            # Derive the X chromosome-specific signature by subtracting autosomal genome hashes
-            specific_xchr_sig = self.specific_chr_to_sig["sex-x"] - autosomals_genome_sig
-            self.logger.debug("\t-Derived X chromosome-specific signature size: %d hashes.", len(specific_xchr_sig))
-            
-            # Intersect the sample signature with chromosome-specific signatures
-            sample_specific_xchr_sig = sample_sig & self.specific_chr_to_sig['sex-x']
-            if len(sample_specific_xchr_sig) == 0:
-                self.logger.warning("No X chromosome-specific k-mers found in the sample signature.")
-            self.logger.debug("\t-Intersected sample signature with X chromosome-specific k-mers = %d hashes.", len(sample_specific_xchr_sig))
-            sample_autosomal_sig = sample_sig & autosomals_genome_sig #! ( GENOME - SEX - MITO )
-            self.logger.debug("\t-Intersected sample signature with autosomal genome k-mers = %d hashes.", len(sample_autosomal_sig))
-            
-            # Retrieve mean abundances
-            xchr_mean_abundance = sample_specific_xchr_sig.total_abundance/ len(self.specific_chr_to_sig['sex-x']) if len(sample_specific_xchr_sig) > 0 else 0.0
-            autosomal_mean_abundance = np.mean(list(autosomal_chr_to_mean_abundance.values())) if len(sample_autosomal_sig) > 0 else 0.0
-            #! TODO: REMOVE LATER
-            # autosomal_mean_abundance = sample_autosomal_sig.mean_abundance if len(sample_autosomal_sig) > 0 else 0.0
-            
-            # Calculate chrX Ploidy score
-            if autosomal_mean_abundance == 0:
-                self.logger.warning("Autosomal mean abundance is zero. Setting chrX Ploidy score to zero to avoid division by zero.")
-                xploidy_score = 0.0
+                # Calculate chrX Ploidy score
+                if autosomal_mean_abundance == 0:
+                    self.logger.warning("Autosomal mean abundance is zero. Setting chrX Ploidy score to zero to avoid division by zero.")
+                    xploidy_score = 0.0
+                else:
+                    xploidy_score = (
+                        (xchr_mean_abundance / autosomal_mean_abundance)
+                        if len(specific_xchr_sig) > 0 and autosomal_mean_abundance > 0 else 0.0
+                    )
+
+                self.logger.debug("Calculated chrX Ploidy score: %.4f", xploidy_score)
+                sex_stats.update({"chrX Ploidy score": xploidy_score})
+                self.logger.debug("chrX Ploidy score: %.4f", sex_stats["chrX Ploidy score"])
             else:
-                xploidy_score = (
-                    (xchr_mean_abundance / autosomal_mean_abundance)
-                    if len(specific_xchr_sig) > 0 and autosomal_mean_abundance > 0 else 0.0
-                )
-
-            self.logger.debug("Calculated chrX Ploidy score: %.4f", xploidy_score)
-            sex_stats.update({"chrX Ploidy score": xploidy_score})
-            self.logger.debug("chrX Ploidy score: %.4f", sex_stats["chrX Ploidy score"])
+                self.logger.debug("No X chromosome-specific signature detected. chrX Ploidy score will be set to zero.")
             
             # Calculate chrY Coverage score if Y chromosome is present
             if 'sex-y' in self.specific_chr_to_sig and 'sex-x' in self.specific_chr_to_sig:
