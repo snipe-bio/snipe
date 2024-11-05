@@ -2,11 +2,5 @@
     "python.analysis.extraPaths": [
         "./src"
     ],
-    "cSpell.words": [
-        "AMPLICON", "signame",
-    ]
-    // # show line numbers in jupyter notebooks
-    // "jupyter.lineNumbers": "on",
-    // # show line numbers in jup
-
+    "cmake.sourceDirectory": "/Users/mabuelanin/dev/snipe/_bioconda-recipes/recipes/megadepth",
 }
