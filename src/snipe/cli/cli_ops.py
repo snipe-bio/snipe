@@ -94,8 +94,7 @@ def parse_operation_order(ctx, **kwargs):
             op_name, param = option_order[arg]
             if param and kwargs.get(param) is not None:
                 operations.append((op_name, kwargs[param]))
-            elif param is None and kwargs.get(op_name.replace('_', '-')):
-                # For flag-type operations
+            elif param is None and kwargs.get(op_name):
                 operations.append((op_name, None))
             skip_next = param is not None
         else:
