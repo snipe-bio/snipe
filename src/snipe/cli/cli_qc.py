@@ -6,8 +6,6 @@ from typing import Optional, Any, List, Dict, Set, Union, Tuple
 
 import click
 import pandas as pd
-from tqdm import tqdm
-import concurrent.futures
 
 from snipe.api.enums import SigType
 from snipe.api.snipe_sig import SnipeSig
@@ -17,8 +15,8 @@ from snipe import __version__
 import json
 import lzstring
 import hashlib
-
-
+import multiprocessing
+from joblib import Parallel, delayed
 
 class MetadataSerializer:
     def __init__(self, logger: Optional[logging.Logger] = None, hash_algo: str = 'sha256'):
@@ -107,133 +105,52 @@ def split_chunks(lst: List[str], n: int) -> List[List[str]]:
     return [lst[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 
-def process_subset(
-    subset: List[str],
-    ref: str,
-    amplicon: Optional[str],
-    ychr: Optional[str],
-    vars: List[str],
-    export_var: bool,
-    roi: bool,
-    debug: bool
-) -> Tuple[Dict[str, Any], List[str]]:
-    """
-    Worker function to process a subset of samples.
-    
-    Args:
-        subset (List[str]): List of sample file paths to process.
-        ref (str): Reference signature file path.
-        amplicon (Optional[str]): Amplicon signature file path.
-        ychr (Optional[str]): Y chromosome signature file path.
-        vars (List[str]): List of variance signature file paths.
-        export_var (bool): Flag to export variance signatures.
-        roi (bool): Flag to calculate ROI.
-        debug (bool): Flag to enable debug logging.
-    
-    Returns:
-        Tuple[Dict[str, Any], List[str]]: A tuple containing:
-            - A dictionary mapping sample names to their QC statistics.
-            - A list of sample names that failed to process.
-    """
-    # Configure logging for the worker
-    subset_logger = logging.getLogger('snipe_qc_worker')
-    subset_logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG if debug else logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    if not subset_logger.hasHandlers():
-        subset_logger.addHandler(handler)
-    
-    subset_logger.debug(f"Worker started with {len(subset)} samples.")
-    
-    # Load reference signature
-    try:
-        reference_sig = SnipeSig(sourmash_sig=ref, sig_type=SigType.GENOME, enable_logging=debug)
-        subset_logger.debug(f"Loaded reference signature: {reference_sig.name}")
-    except Exception as e:
-        subset_logger.error(f"Failed to load reference signature from {ref}: {e}")
-        return {}, subset  # All samples in this subset fail
-    
-    # Load amplicon signature if provided
-    amplicon_sig = None
-    if amplicon:
-        try:
-            amplicon_sig = SnipeSig(sourmash_sig=amplicon, sig_type=SigType.AMPLICON, enable_logging=debug)
-            subset_logger.debug(f"Loaded amplicon signature: {amplicon_sig.name}")
-        except Exception as e:
-            subset_logger.error(f"Failed to load amplicon signature from {amplicon}: {e}")
-            return {}, subset  # All samples in this subset fail
-    
-    # Load Y chromosome signature if provided
-    ychr_sig = None
-    if ychr:
-        try:
-            ychr_sig = SnipeSig(sourmash_sig=ychr, sig_type=SigType.GENOME, enable_logging=debug)
-            subset_logger.debug(f"Loaded Y chromosome signature: {ychr_sig.name}")
-        except Exception as e:
-            subset_logger.error(f"Failed to load Y chromosome signature from {ychr}: {e}")
-            return {}, subset  # All samples in this subset fail
-    
-    # Load variance signatures if provided
-    vars_snipesigs = []
-    if vars:
-        subset_logger.debug(f"Loading {len(vars)} variance signature(s).")
-        for path in vars:
-            if not os.path.exists(path):
-                subset_logger.error(f"Variance signature file does not exist: {path}")
-                return {}, subset  # All samples in this subset fail
-            try:
-                var_sig = SnipeSig(sourmash_sig=path, sig_type=SigType.AMPLICON, enable_logging=debug)
-                vars_snipesigs.append(var_sig)
-                subset_logger.debug(f"Loaded variance signature: {var_sig.name}")
-            except Exception as e:
-                subset_logger.error(f"Failed to load variance signature from {path}: {e}")
-                return {}, subset  # All samples in this subset fail
+def process_sample_task(args) -> Tuple[str, Dict[str, Any], Optional[str]]:
+    (sample_path, sample_name, ref_sig_data, amplicon_sig_data, ychr_sig_data,
+     varsigs_data, export_var, roi, predict_extra_folds, debug) = args
 
-    # Initialize QC instance
+    # Reconstruct signatures from shared data
     try:
+        reference_sig = ref_sig_data
+        amplicon_sig = amplicon_sig_data
+        ychr_sig = ychr_sig_data
+        vars_snipesigs = varsigs_data
+
+        # Configure logging for the worker
+        logger = logging.getLogger(f'snipe_qc_worker_{sample_name}')
+        logger.setLevel(logging.DEBUG if debug else logging.INFO)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        if not logger.hasHandlers():
+            logger.addHandler(handler)
+
+        # Initialize QC instance
         qc_inst = MultiSigReferenceQC(
             reference_sig=reference_sig,
             amplicon_sig=amplicon_sig,
-            ychr=ychr_sig if ychr_sig else None,
-            varsigs=vars_snipesigs if vars_snipesigs else None,
+            ychr=ychr_sig,
+            varsigs=vars_snipesigs,
             export_varsigs=export_var,
             enable_logging=debug
         )
-    except Exception as e:
-        subset_logger.error(f"Failed to initialize MultiSigReferenceQC: {e}")
-        return {}, subset  # All samples in this subset fail
-
-    predict_extra_folds = [1, 2, 5, 9]
-
-    subset_stats = {}
-    subset_failed = []
-    for sample_path in subset:
+        
         sample_sig = SnipeSig(sourmash_sig=sample_path, sig_type=SigType.SAMPLE, enable_logging=debug)
         if sample_sig.name == "":
-            _newname = os.path.basename(sample_path).split('.')[0]
-            sample_sig.name = _newname
-            subset_logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
+            sample_sig.name = sample_name
+            logger.warning(f"Sample name is empty. Setting to: `{sample_sig.name}`")
 
-        try:
-            sample_stats = qc_inst.process_sample(
-                sample_sig=sample_sig,
-                predict_extra_folds=predict_extra_folds if roi else None,
-                advanced=True
-            )
-            #! override the internal sig file path with the actual used file path.
-            sample_stats["file_path"] =  sample_path
-            subset_stats[sample_sig.name] = sample_stats
-            subset_logger.debug(f"Successfully processed sample: {sample_sig.name}")
-        except Exception as e:
-            subset_failed.append(sample_sig.name)
-            subset_logger.error(f"Failed to process sample {sample_sig.name}: {e}")
-            continue
-    
-    subset_logger.debug(f"Worker completed. Success: {len(subset_stats)}, Failed: {len(subset_failed)}")
-    return subset_stats, subset_failed
-
+        sample_stats = qc_inst.process_sample(
+            sample_sig=sample_sig,
+            predict_extra_folds=predict_extra_folds if roi else None,
+            advanced=True
+        )
+        sample_stats["file_path"] = sample_path
+        return sample_sig.name, sample_stats, None
+    except Exception as e:
+        error_msg = f"Failed to process sample {sample_name}: {e}"
+        return sample_name, {}, error_msg
 
 @click.command()
 @click.option('--ref', type=click.Path(exists=True), required=True, help='Reference genome signature file (required).')
@@ -253,274 +170,9 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
        amplicon: Optional[str], roi: bool, export_var: bool,
        ychr: Optional[str], debug: bool, output: str, vars: List[str], cores: int,
        metadata: Optional[str], metadata_from_file: Optional[str]):
-
-    """
-        Perform quality control (QC) on multiple samples against a reference genome.
-
-        This command calculates various QC metrics for each provided sample, optionally including advanced metrics and ROI (Return on investement) predictions. Results are aggregated and exported to a TSV file.
-
-        ## Usage
-
-        ```bash
-        snipe qc [OPTIONS]
-        ```
-
-        ## Options
-
-        - `--ref PATH` **[required]**  
-        Reference genome signature file.
-
-        - `--sample PATH`  
-        Sample signature file. Can be provided multiple times.
-
-        - `--samples-from-file PATH`  
-        File containing sample paths (one per line).
-
-        - `--amplicon PATH`  
-        Amplicon signature file (optional).
-
-        - `--roi`  
-        Calculate ROI for 1x, 2x, 5x, and 9x coverage folds.
-
-        - `--ychr PATH`  
-        Y chromosome signature file (overrides the reference ychr).
-
-        - `--debug`  
-        Enable debugging and detailed logging.
-
-        - `-o`, `--output PATH` **[required]**  
-        Output TSV file for QC results.
-
-        - `--var PATH`  
-        Variance signature file path. Can be used multiple times.
-        
-        - `--export-var`
-        Export signatures for sample hashes found in the variance signature.
-        
-        - `-c`, `--cores INT`
-        Number of CPU cores to use for parallel processing. Default: 1.
-        
-        - `--metadata STR`
-        Additional metadata in the format `colname=value,colname=value,...`. Applies to all samples.
-        
-        - `--metadata-from-file PATH`
-        File containing metadata information in TSV or CSV format.  Each row should have `sample_path,metadata_col,value`.
-
-        ## Examples
-
-        ### Performing QC on Multiple Samples
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --sample sample2.sig -o qc_results.tsv
-        ```
-
-        ### Performing QC with Samples Listed in a File
-
-        ```bash
-        snipe qc --ref reference.sig --samples-from-file samples.txt -o qc_results.tsv
-        ```
-
-        *Contents of `samples.txt`:*
-
-        ```
-        sample1.sig
-        sample2.sig
-        sample3.sig
-        ```
-
-        ### Performing QC with an Amplicon Signature
-
-        ```bash
-        snipe qc --ref reference.sig --amplicon amplicon.sig --sample sample1.sig -o qc_results.tsv
-        ```
-
-        ### Including Advanced QC Metrics and ROI Calculations
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --advanced --roi -o qc_results.tsv
-        ```
-
-        ### Using Multiple Variance Signatures
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --var var1.sig --var var2.sig -o qc_results.tsv
-        ```
-
-        ### Overriding the Y Chromosome Signature
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --ychr custom_y.sig -o qc_results.tsv
-        ```
-
-        ### Combining Multiple Options
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --sample sample2.sig --amplicon amplicon.sig --var var1.sig --var var2.sig --advanced --roi -o qc_results.tsv
-        ```
-
-        ## Detailed Use Cases
-
-        ### Use Case 1: Basic QC on Single Sample
-
-        **Objective:** Perform QC on a single sample against a reference genome without any advanced metrics or ROI.
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig -o qc_basic.tsv
-        ```
-
-        **Explanation:**
-
-        - `--ref reference.sig`: Specifies the reference genome signature file.
-        - `--sample sample1.sig`: Specifies the sample signature file.
-        - `-o qc_basic.tsv`: Specifies the output TSV file for QC results.
-
-        **Expected Output:**
-
-        A TSV file named `qc_basic.tsv` containing basic QC metrics for `sample1.sig`.
-
-        ### Use Case 2: QC on Multiple Samples with ROI
-
-        **Objective:** Perform QC on multiple samples and calculate Regions of Interest (ROI) for each.
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --sample sample2.sig --roi -o qc_roi.tsv
-        ```
-
-        **Explanation:**
-
-        - `--ref reference.sig`: Reference genome signature file.
-        - `--sample sample1.sig` & `--sample sample2.sig`: Multiple sample signature files.
-        - `--roi`: Enables ROI calculations.
-        - `-o qc_roi.tsv`: Output file for QC results.
-
-        **Expected Output:**
-
-        A TSV file named `qc_roi.tsv` containing QC metrics along with ROI predictions for `sample1.sig` and `sample2.sig`.
-
-        ### Use Case 3: Advanced QC with Amplicon and Variance Signatures
-
-        **Objective:** Perform advanced QC on a sample using an amplicon signature and multiple variance signatures.
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --amplicon amplicon.sig --sample sample1.sig --var var1.sig --var var2.sig --advanced -o qc_advanced.tsv
-        ```
-
-        **Explanation:**
-
-        - `--ref reference.sig`: Reference genome signature file.
-        - `--amplicon amplicon.sig`: Amplicon signature file.
-        - `--sample sample1.sig`: Sample signature file.
-        - `--var var1.sig` & `--var var2.sig`: Variance signature files.
-        - `--export-var`: Export signatures for variances.
-        - `--metadata`: Additional metadata in the format `metadata1=value,metadata2=value,...`.
-        - `--metadata-from-file`: File containing metadata information in TSV or CSV format per signature.
-        - `-o qc_advanced.tsv`: Output file for QC results.
-
-        **Expected Output:**
-
-        A TSV file named `qc_advanced.tsv` containing comprehensive QC metrics, including advanced metrics and analyses based on the amplicon and variance signatures for `sample1.sig`.
-
-        ### Use Case 4: Overwriting Existing Output File
-
-        **Objective:** Perform QC and overwrite an existing output TSV file.
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig -o qc_results.tsv
-        ```
-
-        **Explanation:**
-
-        - If `qc_results.tsv` already exists, the command will **fail** to prevent accidental overwriting. To overwrite, use the `--force` flag (assuming you've implemented it; if not, you may need to adjust the `qc` command to include a `--force` option).
-
-        **Adjusted Command with `--force` (if implemented):**
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig -o qc_results.tsv --force
-        ```
-
-        **Expected Output:**
-
-        The existing `qc_results.tsv` file will be overwritten with the new QC results for `sample1.sig`.
-
-        ### Use Case 5: Using a Custom Y Chromosome Signature
-
-        **Objective:** Override the default Y chromosome signature with a custom one during QC.
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --ychr custom_y.sig -o qc_custom_y.tsv
-        ```
-
-        **Explanation:**
-
-        - `--ychr custom_y.sig`: Specifies a custom Y chromosome signature file to override the default.
-
-        **Expected Output:**
-
-        A TSV file named `qc_custom_y.tsv` containing QC metrics for `sample1.sig` with analyses based on the custom Y chromosome signature.
-
-        ### Use Case 6: Reading Sample Paths from a File
-
-        **Objective:** Perform QC on multiple samples listed in a text file.
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --samples-from-file samples.txt -o qc_from_file.tsv
-        ```
-
-        **Explanation:**
-
-        - `--samples-from-file samples.txt`: Specifies a file containing sample paths, one per line.
-
-        **Contents of `samples.txt`:**
-
-        ```
-        sample1.sig
-        sample2.sig
-        sample3.sig
-        ```
-
-        **Expected Output:**
-
-        A TSV file named `qc_from_file.tsv` containing QC metrics for `sample1.sig`, `sample2.sig`, and `sample3.sig`.
-
-        ### Use Case 7: Combining Multiple Options for Comprehensive QC
-
-        **Command:**
-
-        ```bash
-        snipe qc --ref reference.sig --sample sample1.sig --sample sample2.sig --amplicon amplicon.sig --var var1.sig --var var2.sig --advanced --roi -o qc_comprehensive.tsv
-        ```
-
-        **Explanation:**
-
-        - `--ref reference.zip`: Reference genome signature file.
-        - `--sample sample1.zip` & `--sample sample2.sig`: Multiple sample signature files.
-        - `--amplicon amplicon.zip`: Amplicon signature file.
-        - `--var var1.zip` & `--var var2.zip`: Variance signature files.
-        - `--advanced`: Includes advanced QC metrics.
-        - `--roi`: Enables ROI calculations.
-        - `-o qc_comprehensive.tsv`: Output file for QC results.
-
-        **Expected Output:**
-
-        A TSV file named `qc_comprehensive.tsv` containing comprehensive QC metrics, including advanced analyses, ROI predictions, and data from amplicon and variance signatures for both `sample1.sig` and `sample2.sig`.
-    """
     
-
     start_time = time.time()
 
-    # Configure logging
     # Configure logging
     logger = logging.getLogger('snipe_qc')
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
@@ -665,56 +317,46 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     metadata_str, metadata_md5sum = METADATA.export_and_verify_metadata(
         metadata=export_metadata
     )
-            
-
+    
     predict_extra_folds = [1, 2, 5, 9]
     
     sample_to_stats = {}
     failed_samples = []
 
-    if len(valid_samples):
-        logger.info(f"Parallel processing enabled with {cores} cores.")
-        # Split valid_samples into chunks
-        chunks = split_chunks(valid_samples, cores)
-        logger.debug(f"Splitting samples into {len(chunks)} chunks for processing.")
+    tasks = []
+    for sample_path in valid_samples:
+        sample_name = os.path.basename(sample_path).split('.')[0]
+        task_args = (
+            sample_path,
+            sample_name,
+            reference_sig,
+            amplicon_sig,
+            ychr_sig,
+            vars_snipesigs,
+            export_var,
+            roi,
+            predict_extra_folds,
+            debug
+        )
+        tasks.append(task_args)
 
-        # Prepare arguments for each worker
-        worker_args = [
-            (
-                chunk,
-                ref,
-                amplicon,
-                ychr,
-                vars,
-                export_var,
-                roi,
-                debug
-            )
-            for chunk in chunks
-        ]
+    # Define a wrapper function for joblib
+    def joblib_process_sample(args):
+        return process_sample_task(args)
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=cores) as executor:
-            # Map each chunk to the process_subset function
-            futures = {executor.submit(process_subset, *args): idx for idx, args in enumerate(worker_args)}
-            # Initialize tqdm with total number of samples
-            with tqdm(total=len(valid_samples), desc="Processing samples") as pbar:
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        subset_stats, subset_failed = future.result()
-                        sample_to_stats.update(subset_stats)
-                        failed_samples.extend(subset_failed)
-                        # Update the progress bar by the number of samples processed in this subset
-                        processed_count = len(subset_stats) + len(subset_failed)
-                        pbar.update(processed_count)
-                    except Exception as e:
-                        logger.error(f"A worker failed with exception: {e}")
-                        # Retrieve the subset that caused the exception
-                        subset_idx = futures[future]
-                        subset = worker_args[subset_idx][0]
-                        # Update the progress bar by the number of samples in the failed subset
-                        pbar.update(len(subset))
-                        failed_samples.extend(subset)
-                        continue
+    # Use joblib for parallel processing
+    results = Parallel(n_jobs=cores)(
+        delayed(joblib_process_sample)(args) for args in tasks
+    )
+
+    # Collect results
+    for name, stats, error_msg in results:
+        if error_msg:
+            failed_samples.append(name)
+            logger.error(error_msg)
+        else:
+            sample_to_stats[name] = stats
+            logger.debug(f"Successfully processed sample: {name}")
 
     # Separate successful and failed results
     succeeded = list(sample_to_stats.keys())
@@ -831,7 +473,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     # make sure all integer columns are converted to int
     df = df.apply(lambda col: col.apply(lambda x: int(x) if isinstance(x, float) and x.is_integer() else x))
     df_zero_uniqe_hashes = df[df["Total unique k-mers"] == 0]
-    df = df[df["Total unique k-mers"] != 0]
+    df = df[(df["Total unique k-mers"] > 0)]
     if len(df_zero_uniqe_hashes):
         logger.warning(f"Empty sigs not processed: {len(df_zero_uniqe_hashes)}: {', '.join(df_zero_uniqe_hashes['filename'])}")
     
