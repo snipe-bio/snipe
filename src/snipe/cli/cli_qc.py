@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import logging
-from typing import Optional, Any, List, Dict, Set, Union, Tuple
+from typing import Optional, Any, List, Dict, Set, Tuple
 
 import click
 import pandas as pd
@@ -11,7 +11,6 @@ from snipe.api.enums import SigType
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.multisig_reference_QC import MultiSigReferenceQC
 from snipe import __version__
-import tqdm
 import json
 import lzstring
 import hashlib
