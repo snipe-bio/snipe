@@ -17,6 +17,9 @@ import hashlib
 from joblib import Parallel, delayed
 from multiprocessing import Manager
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module='joblib')
+
 class MetadataSerializer:
     def __init__(self, logger: Optional[logging.Logger] = None, hash_algo: str = 'sha256'):
         self.hash_algo = hash_algo
@@ -474,7 +477,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
     floating_5 = ["coverage"]
     floating_2 = ["Ploidy", "chrY Coverage", "CV", "mean", "median", "chr-", 'Relative total abundance', 'fraction of total abundance']
     floating_3 = ["Mapping index", "contamination", "error", "k-mer-to-bases ratio"]
-
+    integers = ["unique k-mers"]
     # for any float columns, round to 4 decimal places
     for col in df.columns:
         if (df[col].dtype == float) and (df[col].eq(0).all()):
@@ -485,6 +488,10 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             df[col] = df[col].round(2)
         elif any([x in col for x in floating_3]):
             df[col] = df[col].round(3)
+        elif any([x in col for x in integers]):
+            # nans are zeros first
+            df[col] = df[col].fillna(0)
+            df[col] = df[col].astype(int)
     
     # make sure all integer columns are converted to int
     df = df.apply(lambda col: col.apply(lambda x: int(x) if isinstance(x, float) and x.is_integer() else x))
