@@ -16,6 +16,7 @@ import json
 import lzstring
 import hashlib
 from joblib import Parallel, delayed
+from multiprocessing import Manager
 
 class MetadataSerializer:
     def __init__(self, logger: Optional[logging.Logger] = None, hash_algo: str = 'sha256'):
@@ -338,15 +339,32 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
             debug
         )
         tasks.append(task_args)
+        
 
-    # Define a wrapper function for joblib
-    def joblib_process_sample(args):
-        return process_sample_task(args)
+    total_samples = len(tasks)
+    sample_to_stats = {}
+    failed_samples = []
+    
+    manager = Manager()
+    progress_counter = manager.Value('i', 0)
+    progress_lock = manager.Lock()
+    def process_sample_task_with_progress(args):
+        # Call the original function to process the sample
+        result = process_sample_task(args)
+
+        with progress_lock:
+            progress_counter.value += 1
+            current_progress = progress_counter.value
+            progress_percent = (current_progress / total_samples) * 100
+            print(f'\rProcessing samples: {current_progress}/{total_samples} ({progress_percent:.2f}%)', end='')
+
+        return result
 
     # Use joblib for parallel processing
-    results = Parallel(n_jobs=cores, timeout=100)(
-        delayed(joblib_process_sample)(args) for args in tasks
+    results = Parallel(n_jobs=cores, timeout=99999)(
+        delayed(process_sample_task_with_progress)(args) for args in tasks
     )
+    print()
 
     # Collect results
     for name, stats, error_msg in results:
