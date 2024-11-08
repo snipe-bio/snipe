@@ -11,11 +11,10 @@ from snipe.api.enums import SigType
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.multisig_reference_QC import MultiSigReferenceQC
 from snipe import __version__
-
+import tqdm
 import json
 import lzstring
 import hashlib
-import multiprocessing
 from joblib import Parallel, delayed
 
 class MetadataSerializer:
@@ -345,7 +344,7 @@ def qc(ref: str, sample: List[str], samples_from_file: Optional[str],
         return process_sample_task(args)
 
     # Use joblib for parallel processing
-    results = Parallel(n_jobs=cores)(
+    results = Parallel(n_jobs=cores, timeout=100)(
         delayed(joblib_process_sample)(args) for args in tasks
     )
 
