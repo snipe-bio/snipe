@@ -895,12 +895,18 @@ def process_experiment(args):
         result['error'] = str(e)
         return result
 
+    skipped_due_to_empty = []
     # Duplicate Detection
     try:
         # Create a mapping from md5sum to list of signatures
         md5_to_signatures = defaultdict(list)
         for sig in signatures:
-            md5_to_signatures[sig.md5sum].append(sig)
+            if len(sig):
+                # here we make sure it's not an empty signature
+                md5_to_signatures[sig.md5sum].append(sig)
+            else:
+                skipped_due_to_empty.append(os.path.basename(sig.name))
+                logger.debug(f"Skipping empty signature: {sig.name}")
         
         # Identify duplicates
         unique_signatures = []
@@ -921,6 +927,7 @@ def process_experiment(args):
         # Update the result with merged and skipped signatures
         result['merged_signatures'] = [os.path.basename(sig.name) for sig in signatures]
         result['skipped_signatures'] = skipped_signatures
+        result['skipped_due_to_empty'] = skipped_due_to_empty
 
     except Exception as e:
         result['status'] = 'failure'
@@ -1166,14 +1173,17 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
     failed_experiments = total_experiments - successful_experiments
     # total_skipped = sum(len(r.get('skipped_signatures', [])) for r in results)
     total_skipped = 0
+    total_skipped_due_to_empty = sum(len(r.get('skipped_due_to_empty', [])) for r in results)
     for r in results:
         total_skipped += len(r.get('skipped_signatures', []))
+
 
     click.echo("\nGuided Merge Summary:")
     click.echo(f"\t- Total experiments processed: {total_experiments}")
     click.echo(f"\t- Successful experiments: {successful_experiments}")
     click.echo(f"\t- Failed experiments: {failed_experiments}")
     click.echo(f"\t- Total signatures skipped due to duplication: {total_skipped}")
+    click.echo(f"\t- Total signatures skipped due to being empty: {total_skipped_due_to_empty}")
     click.echo(f"\t- Detailed report saved to {report_file}")
 
     click.echo(f"\nReport saved to {report_file}")
