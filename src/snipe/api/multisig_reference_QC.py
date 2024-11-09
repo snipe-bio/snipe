@@ -842,6 +842,7 @@ class MultiSigReferenceQC:
             if sample_sig._bases_count > 0 and sample_sig._bases_count is not None:
                 corrected_total_abundance = sample_sig._bases_count / sample_sig.scale
             else:
+                self.logger.warning("Total bases count is zero or None. This will affect the calculation of adjsuted coverage index and k-mer-to-bases ratio.")
                 corrected_total_abundance = x_unique[-1]
             predicted_genomic_unique_hashes = saturation_model(corrected_total_abundance, a_unique, b_unique)
             current_unique_hashes = y_unique[-1]
