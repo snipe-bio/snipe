@@ -843,23 +843,24 @@ class MultiSigReferenceQC:
             current_unique_hashes = y_unique[-1]
             predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes)
             delta_unique_hashes = predicted_genomic_unique_hashes - current_unique_hashes
+            adjusted_genome_coverage_index = predicted_genomic_unique_hashes / total_reference_kmers if total_reference_kmers > 0 else 0.0
 
             predicted_unique_hashes = {
                 "Predicted genomic unique k-mers": predicted_genomic_unique_hashes,
                 "Delta genomic unique k-mers": delta_unique_hashes,
-                "Adjusted genome coverage index": predicted_genomic_unique_hashes / total_reference_kmers
+                "Adjusted genome coverage index": adjusted_genome_coverage_index
             }
 
-            x_coverage = x_unique
+            x_total_abundance = x_unique
             y_coverage = cumulative_coverage_indices
-            initial_guess_coverage = [y_coverage[-1], x_coverage[int(len(x_coverage) / 2)]]
+            initial_guess_coverage = [y_coverage[-1], x_total_abundance[int(len(x_total_abundance) / 2)]]
 
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", OptimizeWarning)
                     params_coverage, covariance_coverage = curve_fit(
                         saturation_model,
-                        x_coverage,
+                        x_total_abundance,
                         y_coverage,
                         p0=initial_guess_coverage,
                         bounds=(0, np.inf),
@@ -876,9 +877,10 @@ class MultiSigReferenceQC:
             for extra_fold in predict_extra_folds:
                 if extra_fold < 1:
                     continue
-
-                total_abundance = x_coverage[-1]
-                predicted_total_abundance = total_abundance * (1 + extra_fold)
+                
+                #! BETA: Predict the coverage based on the adjusted total abundance
+                # total_abundance = x_total_abundance[-1]
+                predicted_total_abundance = (1 + extra_fold) * corrected_total_abundance # x_total_abundance[-1]
                 predicted_coverage = saturation_model(predicted_total_abundance, a_coverage, b_coverage)
                 max_coverage = 1.0
                 predicted_coverage = min(predicted_coverage, max_coverage)
