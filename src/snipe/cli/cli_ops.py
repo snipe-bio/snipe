@@ -1038,20 +1038,20 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
             reader = csv.reader(tbl_file, delimiter=delimiter)
             for line_num, row in enumerate(reader, start=1):
                 if not row:
-                    logger.debug(f"Line {line_num}: Empty line. Skipping.")
+                    logger.error(f"Line {line_num}: Empty line. Skipping.")
                     continue  # Skip empty lines
                 if len(row) < 2:
-                    logger.warning(f"Line {line_num}: Invalid format. Expected 2 columns, got {len(row)}. Skipping.")
+                    logger.error(f"Line {line_num}: Invalid format. Expected 2 columns, got {len(row)}. Skipping.")
                     total_invalid += 1
                     continue
                 sig_path, exp_name = row[0].strip(), row[1].strip()
                 if not sig_path or not exp_name:
-                    logger.warning(f"Line {line_num}: Missing signature path or experiment name. Skipping.")
+                    logger.error(f"Line {line_num}: Missing signature path or experiment name. Skipping.")
                     total_invalid += 1
                     continue
                 total_mapped += 1
                 if not os.path.isfile(sig_path):
-                    logger.warning(f"Line {line_num}: Signature file does not exist: {sig_path}. Skipping.")
+                    logger.error(f"Line {line_num}: Signature file does not exist: {sig_path}. Skipping.")
                     invalid_files.append(sig_path)
                     total_invalid += 1
                     continue
