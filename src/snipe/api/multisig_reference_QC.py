@@ -33,7 +33,6 @@ class MultiSigReferenceQC:
     - `genome_stats` (`Dict[str, Any]`): Calculated genome-related statistics.
     - `amplicon_stats` (`Dict[str, Any]`): Calculated amplicon-related statistics (if `amplicon_sig` is provided).
     - `advanced_stats` (`Dict[str, Any]`): Calculated advanced statistics (optional).
-    - `predicted_assay_type` (`str`): Predicted assay type based on metrics.
 
     **Calculated Metrics**
 
@@ -329,11 +328,6 @@ class MultiSigReferenceQC:
         self.export_varsigs = export_varsigs
         self.sample_to_stats = {}
 
-
-        # Set grey zone thresholds
-        self.relative_total_abundance_grey_zone = [0.08092723407173719, 0.11884490500267662]
-
-
     def process_sample(self, sample_sig: SnipeSig, predict_extra_folds: Optional[List[int]] = None, advanced: Optional[bool] = False) -> Dict[str, Any]:
 
         # ============= Attributes =============
@@ -348,7 +342,6 @@ class MultiSigReferenceQC:
         predicted_error_contamination_index: Dict[str, Any] = {}
         vars_nonref_stats: Dict[str, Any] = {}
         chr_to_mean_abundance: Dict[str, np.float64] = {}
-        predicted_assay_type: str = "WGS"
         roi_stats: Dict[str, Any] = {}
 
 
@@ -469,19 +462,6 @@ class MultiSigReferenceQC:
                 if genome_stats.get("Genome coverage index", 0) > 0 and 
                 amplicon_stats.get("Amplicon coverage index") is not None else 0
             )
-
-            relative_total_abundance = amplicon_stats["Relative total abundance"]
-            if relative_total_abundance <= self.relative_total_abundance_grey_zone[0]:
-                predicted_assay_type = "WGS"
-            elif relative_total_abundance >= self.relative_total_abundance_grey_zone[1]:
-                predicted_assay_type = "WXS"
-            else:
-                # Assign based on the closest threshold
-                distance_to_wgs = abs(relative_total_abundance - self.relative_total_abundance_grey_zone[0])
-                distance_to_wxs = abs(relative_total_abundance - self.relative_total_abundance_grey_zone[1])
-                predicted_assay_type = "WGS" if distance_to_wgs < distance_to_wxs else "WXS"
-
-            self.logger.debug("Predicted assay type: %s", predicted_assay_type)
         
         else:
             self.logger.debug("No amplicon signature provided.")
@@ -790,152 +770,137 @@ class MultiSigReferenceQC:
         if predict_extra_folds and genome_stats["Genome coverage index"] > 0.01:
             predicted_fold_coverage = {}
             predicted_fold_delta_coverage = {}
+            predicted_unique_hashes = {}
+            predicted_delta_unique_hashes = {}
             nparts = 30
-            if isinstance(self.amplicon_sig, SnipeSig):
-                roi_reference_sig = self.amplicon_sig
-                self.logger.debug("Using amplicon signature as ROI reference.")
-            else:
-                roi_reference_sig = self.reference_sig
-                self.logger.debug("Using reference genome signature as ROI reference.")
+            roi_reference_sig = self.reference_sig
 
-            # Get sample signature intersected with the reference
             _sample_sig_genome = sample_sig & self.reference_sig
 
             hashes = _sample_sig_genome.hashes
             abundances = _sample_sig_genome.abundances
             N = len(hashes)
 
-            # Generate random fractions using Dirichlet distribution
-            fractions = np.random.dirichlet([1] * nparts, size=N)  # Shape: (N, nparts)
-
-            # Calculate counts for each part
-            counts = np.round(abundances[:, None] * fractions).astype(int)  # Shape: (N, nparts)
-
-            # Adjust counts to ensure sums match original abundances
+            fractions = np.random.dirichlet([1] * nparts, size=N)
+            counts = np.round(abundances[:, None] * fractions).astype(int)
             differences = abundances - counts.sum(axis=1)
             indices = np.argmax(counts, axis=1)
             counts[np.arange(N), indices] += differences
-
-            # Compute cumulative counts
-            counts_cumulative = counts.cumsum(axis=1)  # Shape: (N, nparts)
+            counts_cumulative = counts.cumsum(axis=1)
             cumulative_total_abundances = counts.sum(axis=0).cumsum()
 
-            coverage_depth_data = []
-
-            # Force conversion to GENOME
             roi_reference_sig.sigtype = SigType.GENOME
+
+            cumulative_coverage_indices = np.zeros(nparts)
+            cumulative_unique_hashes = np.zeros(nparts)
+            total_reference_kmers = len(self.reference_sig)
 
             for i in range(nparts):
                 cumulative_counts = counts_cumulative[:, i]
                 idx = cumulative_counts > 0
+                num_unique_kmers = np.sum(idx)
+                cumulative_unique_hashes[i] = num_unique_kmers
+                coverage_index = num_unique_kmers / total_reference_kmers
+                cumulative_coverage_indices[i] = coverage_index
 
-                cumulative_hashes = hashes[idx]
-                cumulative_abundances = cumulative_counts[idx]
-
-                cumulative_snipe_sig = SnipeSig.create_from_hashes_abundances(
-                    hashes=cumulative_hashes,
-                    abundances=cumulative_abundances,
-                    ksize=sample_sig.ksize,
-                    scale=sample_sig.scale,
-                    name=f"{sample_sig.name}_cumulative_part_{i+1}",
-                    filename=sample_sig.filename,
-                    enable_logging=self.enable_logging
-                )
-
-                # Compute coverage index
-                cumulative_qc = ReferenceQC(
-                    sample_sig=cumulative_snipe_sig,
-                    reference_sig=roi_reference_sig,
-                    enable_logging=self.enable_logging
-                )
-                
-                # use MultiSigQC instead of ReferenceQC
-                cumulative_stats = self.process_sample(
-                    sample_sig=cumulative_snipe_sig,
-                    predict_extra_folds=None,
-                    advanced=False
-                )
-                
-                cumulative_coverage_index = cumulative_stats.get("Genome coverage index", 0.0)
-                cumulative_total_abundance = cumulative_total_abundances[i]
-
+            coverage_depth_data = []
+            for i in range(nparts):
                 coverage_depth_data.append({
                     "cumulative_parts": i + 1,
-                    "cumulative_total_abundance": cumulative_total_abundance,
-                    "cumulative_coverage_index": cumulative_coverage_index,
+                    "cumulative_total_abundance": cumulative_total_abundances[i],
+                    "cumulative_coverage_index": cumulative_coverage_indices[i],
+                    "cumulative_unique_hashes": cumulative_unique_hashes[i]
                 })
 
-                self.logger.debug("Added coverage depth data for cumulative part %d.", i + 1)
+            def saturation_model(x, a, b):
+                return a * x / (b + x)
 
-            self.logger.debug("Coverage vs depth calculation completed.")
+            x_unique = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
+            y_unique = np.array([d["cumulative_unique_hashes"] for d in coverage_depth_data])
+            y_unique = np.maximum.accumulate(y_unique)
+            initial_guess_unique = [y_unique[-1], x_unique[int(len(x_unique) / 2)]]
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", OptimizeWarning)
+                    params_unique, covariance_unique = curve_fit(
+                        saturation_model,
+                        x_unique,
+                        y_unique,
+                        p0=initial_guess_unique,
+                        bounds=(0, np.inf),
+                        maxfev=10000
+                    )
+            except (RuntimeError, OptimizeWarning) as exc:
+                raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.") from exc
+
+            if np.isinf(covariance_unique).any() or np.isnan(covariance_unique).any():
+                raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.")
+
+            a_unique, b_unique = params_unique
+            corrected_total_abundance = genome_stats.get("Corrected total abundance", x_unique[-1])
+            predicted_genomic_unique_hashes = saturation_model(corrected_total_abundance, a_unique, b_unique)
+            current_unique_hashes = y_unique[-1]
+            predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes)
+            delta_unique_hashes = predicted_genomic_unique_hashes - current_unique_hashes
+            adjusted_genome_coverage_index = predicted_genomic_unique_hashes / total_reference_kmers if total_reference_kmers > 0 else 0.0
+
+            predicted_unique_hashes = {
+                "Predicted genomic unique k-mers": predicted_genomic_unique_hashes,
+                "Delta genomic unique k-mers": delta_unique_hashes,
+                "Adjusted genome coverage index": adjusted_genome_coverage_index
+            }
+
+            x_total_abundance = x_unique
+            y_coverage = cumulative_coverage_indices
+            initial_guess_coverage = [y_coverage[-1], x_total_abundance[int(len(x_total_abundance) / 2)]]
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", OptimizeWarning)
+                    params_coverage, covariance_coverage = curve_fit(
+                        saturation_model,
+                        x_total_abundance,
+                        y_coverage,
+                        p0=initial_guess_coverage,
+                        bounds=(0, np.inf),
+                        maxfev=10000
+                    )
+            except (RuntimeError, OptimizeWarning) as exc:
+                raise RuntimeError("Saturation model fitting for coverage failed.") from exc
+
+            if np.isinf(covariance_coverage).any() or np.isnan(covariance_coverage).any():
+                raise RuntimeError("Saturation model fitting for coverage failed.")
+
+            a_coverage, b_coverage = params_coverage
 
             for extra_fold in predict_extra_folds:
                 if extra_fold < 1:
-                    self.warning.error("Extra fold must be >= 1. Skipping this extra fold prediction.")
                     continue
-
-                # Extract cumulative total abundance and coverage index
-                x_data = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
-                y_data = np.array([d["cumulative_coverage_index"] for d in coverage_depth_data])
-
-                # Saturation model function
-                def saturation_model(x, a, b):
-                    return np.where((b + x) != 0, a * x / (b + x), 0)
-
-                # Initial parameter guesses
-                initial_guess = [
-                    y_data[-1] if len(y_data) > 0 else 0, 
-                    x_data[int(len(x_data) / 2)] if len(x_data) > 0 else 0
-                ]
-
-                # Fit the model to the data
-                try:
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("error", OptimizeWarning)
-                        params, covariance = curve_fit(
-                            saturation_model,
-                            x_data,
-                            y_data,
-                            p0=initial_guess,
-                            bounds=(0, np.inf),
-                            maxfev=10000
-                        )
-                except (RuntimeError, OptimizeWarning) as exc:
-                    self.logger.error("Curve fitting failed.")
-                    raise RuntimeError("Saturation model fitting failed. Cannot predict coverage.") from exc
-
-                # Check if covariance contains inf or nan
-                if np.isinf(covariance).any() or np.isnan(covariance).any():
-                    self.logger.error("Covariance of parameters could not be estimated.")
-                    raise RuntimeError("Saturation model fitting failed. Cannot predict coverage.")
-
-                a, b = params
-
-                # Predict coverage at increased sequencing depth
-                total_abundance = x_data[-1]
-                predicted_total_abundance = total_abundance * (1 + extra_fold)
-                predicted_coverage = saturation_model(predicted_total_abundance, a, b)
-
-                # Ensure the predicted coverage does not exceed maximum possible coverage
-                max_coverage = 1.0  # Coverage index cannot exceed 1
+                
+                #! BETA: Predict the coverage based on the adjusted total abundance
+                # total_abundance = x_total_abundance[-1]
+                predicted_total_abundance = (1 + extra_fold) * corrected_total_abundance # x_total_abundance[-1]
+                predicted_coverage = saturation_model(predicted_total_abundance, a_coverage, b_coverage)
+                max_coverage = 1.0
                 predicted_coverage = min(predicted_coverage, max_coverage)
                 predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
-                _delta_coverage = predicted_coverage - y_data[-1]
+                _delta_coverage = predicted_coverage - y_coverage[-1]
                 predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
+
                 if _delta_coverage < 0:
                     self.logger.warning(
-                        "Predicted coverage at %.2f-fold increase is less than the current coverage (probably low complexity).",
+                        "Predicted coverage at %.2f-fold increase is less than the current coverage.",
                         extra_fold
                     )
-                self.logger.debug("Predicted coverage at %.2f-fold increase: %f", extra_fold, predicted_coverage)
-                self.logger.debug("Predicted delta coverage at %.2f-fold increase: %f", extra_fold, _delta_coverage)
 
-            # Update the ROI stats
             roi_stats.update(predicted_fold_coverage)
             roi_stats.update(predicted_fold_delta_coverage)
-        
+            roi_stats.update(predicted_unique_hashes)
+
         else:
             self.logger.warning("Skipping ROI prediction due to zero Genomic Coverage Index.")
+
                 
         # ============= Merging all stats in one dictionary =============
         aggregated_stats = {}

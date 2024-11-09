@@ -171,6 +171,7 @@ class SnipeSig:
         self._filename = _sourmash_sig.filename
         self._track_abundance = _sourmash_sig.minhash.track_abundance
         self._bases_count = 0
+        self._flag_bases_updated = False
         
         if "-snipesample" in self._name:
             self._name = self._name.replace("-snipesample", "")
@@ -301,6 +302,31 @@ class SnipeSig:
         r"""Get the name of the signature."""
         return self._name
 
+    @property
+    def bases(self) -> int:
+        r"""Get the bases count of the signature."""
+        return self._bases_count
+
+    #setter the bases count
+    @bases.setter
+    def bases(self, new_bases_count: int):
+        r"""
+        Set the bases count of the signature.
+        """
+        self._bases_count = new_bases_count
+        self._flag_bases_updated = True
+    
+    def _create_signame_for_export(self):
+        _name = self._name
+        # make sure we remove all the snipe suffixes
+        _name = _name.replace("-snipesample", "")
+        _name = _name.replace("-snipeamplicon", "")
+        _name = _name.replace("-snipegenome", "")
+        _name = re.sub(r";snipe_bases=([0-9]+)", "", _name)
+        if self._flag_bases_updated:
+            _name += f"-snipesample;snipe_bases={self._bases_count}"
+        return _name
+    
     # setter sigtype
     @sigtype.setter
     def sigtype(self, sigtype: SigType):
@@ -531,13 +557,12 @@ class SnipeSig:
             sourmash.signature.SourmashSignature: A new sourmash.signature.SourmashSignature instance.
         """
         self.logger.debug("Converting SnipeSig to sourmash.signature.SourmashSignature.")
-
         mh = sourmash.minhash.MinHash(n=0, ksize=self._ksize, scaled=self._scale, track_abundance=self._track_abundance)
         if self._track_abundance:
             mh.set_abundances(dict(zip(self._hashes, self._abundances)))
         else:
             mh.add_many(self._hashes)
-        self.sourmash_sig = sourmash.signature.SourmashSignature(mh, name=self._name, filename=self._filename)
+        self.sourmash_sig = sourmash.signature.SourmashSignature(mh, name=self._create_signame_for_export(), filename=self._filename)
         self.logger.debug("Conversion to sourmash.signature.SourmashSignature completed.")
 
     def export(self, path) -> None:
@@ -990,8 +1015,10 @@ class SnipeSig:
         ksize = first_sig.ksize
         scale = first_sig.scale
         track_abundance = first_sig.track_abundance
+        total_bases = first_sig._bases_count
 
         for sig in signatures[1:]:
+            total_bases += sig._bases_count
             if sig.ksize != ksize or sig.scale != scale:
                 raise ValueError("All signatures must have the same ksize and scale.")
 
@@ -1058,11 +1085,11 @@ class SnipeSig:
             abundances=summed_abundances,
             ksize=ksize,
             scale=scale,
-            name=name,
+            name= name,
             filename=filename,
             enable_logging=enable_logging
         )
-
+        summed_signature.bases = total_bases
         return summed_signature
     
     @staticmethod
