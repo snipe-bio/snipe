@@ -838,7 +838,11 @@ class MultiSigReferenceQC:
                 raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.")
 
             a_unique, b_unique = params_unique
-            corrected_total_abundance = genome_stats.get("Corrected total abundance", x_unique[-1])
+            # make sure not non and not zero
+            if sample_sig._bases_count > 0 and sample_sig._bases_count is not None:
+                corrected_total_abundance = sample_sig._bases_count / sample_sig.scale
+            else:
+                corrected_total_abundance = x_unique[-1]
             predicted_genomic_unique_hashes = saturation_model(corrected_total_abundance, a_unique, b_unique)
             current_unique_hashes = y_unique[-1]
             predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes)
