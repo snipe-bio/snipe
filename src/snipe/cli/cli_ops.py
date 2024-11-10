@@ -142,17 +142,11 @@ def apply_operations(signatures: List[SnipeSig], operations: List[tuple], logger
                     sig.trim_below_median()
                     logger.debug(f"Trimmed hashes below median abundance for signature: {sig.name}")
             else:
-                logger.error(f"Unknown operation: {op}")
-                click.echo(f"Error: Unknown operation '{op}'.", err=True)
-                sys.exit(1)
+                raise Exception(f"Unknown operation '{op}'.")
         except ValueError as ve:
-            logger.error(f"Value error during operation '{op}': {ve}")
-            click.echo(f"Error: {ve}", err=True)
-            sys.exit(1)
+            raise Exception(f"Value error during operation '{op}': {ve}") from ve
         except Exception as e:
-            logger.error(f"Unexpected error during operation '{op}': {e}")
-            click.echo(f"Error: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to apply operation '{op}': {e}") from e
 
 
 def load_signatures(sig_paths: List[str], logger: logging.Logger, allow_duplicates: bool = False) -> List[SnipeSig]:
@@ -184,9 +178,7 @@ def load_signatures(sig_paths: List[str], logger: logging.Logger, allow_duplicat
             loaded_paths.add(path)
             logger.debug(f"Loaded signature: {sig.name}")
         except Exception as e:
-            logger.error(f"Failed to load signature from {path}: {e}")
-            click.echo(f"Error: Failed to load signature from {path}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to load signature from {path}: {e}") from e
     return signatures
 
 
@@ -323,19 +315,15 @@ def sum(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
                     line = line.strip()
                     if line:
                         if not os.path.isfile(line):
-                            logger.error(f"Signature file does not exist: {line}")
-                            click.echo(f"Error: Signature file does not exist: {line}", err=True)
-                            sys.exit(1)
+                            raise Exception(f"Signature file does not exist: {line}")
                         all_sig_paths.append(line)
         except Exception as e:
-            logger.error(f"Failed to read signatures from file {sigs_from_file}: {e}")
-            click.echo(f"Error: Failed to read signatures from file {sigs_from_file}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to read signatures from file {sigs_from_file}: {e}") from e
 
     if not all_sig_paths:
         logger.error("No signature files provided. Use positional arguments or --sigs-from-file.")
         click.echo("Error: No signature files provided. Use positional arguments or --sigs-from-file.", err=True)
-        sys.exit(1)
+        raise Exception("No signature files provided. Use positional arguments or --sigs-from-file.")
 
     logger.debug(f"Total signature files to process: {len(all_sig_paths)}")
 
@@ -345,7 +333,7 @@ def sum(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     if not signatures:
         logger.error("No signatures loaded. Exiting.")
         click.echo("Error: No signatures loaded. Exiting.", err=True)
-        sys.exit(1)
+        raise Exception("No signatures loaded. Exiting.")
 
     # Parse operation order
     operations = parse_operation_order(ctx, reset_abundance=reset_abundance, trim_singletons=trim_singletons,
@@ -360,7 +348,7 @@ def sum(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     if os.path.exists(output_file) and not force:
         logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
         click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.")
 
     # Sum signatures
     try:
@@ -372,23 +360,16 @@ def sum(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         )
         logger.debug(f"Summed signature created with name: {summed_signature.name}")
     except Exception as e:
-        logger.error(f"Failed to sum signatures: {e}")
-        click.echo(f"Error: Failed to sum signatures: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to sum signatures: {e}") from e
 
     # Export the summed signature
     try:
         summed_signature.export(output_file)
         click.echo(f"Summed signature exported to {output_file}")
-        logger.info(f"Summed signature exported to {output_file}")
     except FileExistsError:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.") from None
     except Exception as e:
-        logger.error(f"Failed to export summed signature: {e}")
-        click.echo(f"Error: Failed to export summed signature: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to export summed signature: {e}") from e
 
 
 @ops.command()
@@ -442,19 +423,13 @@ def intersect(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
                     line = line.strip()
                     if line:
                         if not os.path.isfile(line):
-                            logger.error(f"Signature file does not exist: {line}")
-                            click.echo(f"Error: Signature file does not exist: {line}", err=True)
-                            sys.exit(1)
+                            raise Exception(f"Signature file does not exist: {line}")
                         all_sig_paths.append(line)
         except Exception as e:
-            logger.error(f"Failed to read signatures from file {sigs_from_file}: {e}")
-            click.echo(f"Error: Failed to read signatures from file {sigs_from_file}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to read signatures from file {sigs_from_file}: {e}") from e
 
     if not all_sig_paths:
-        logger.error("No signature files provided. Use positional arguments or --sigs-from-file.")
-        click.echo("Error: No signature files provided. Use positional arguments or --sigs-from-file.", err=True)
-        sys.exit(1)
+        raise Exception("No signature files provided. Use positional arguments or --sigs-from-file.")
 
     logger.debug(f"Total signature files to process: {len(all_sig_paths)}")
 
@@ -462,9 +437,7 @@ def intersect(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     signatures = load_signatures(all_sig_paths, logger, allow_duplicates=False)
 
     if not signatures:
-        logger.error("No signatures loaded. Exiting.")
-        click.echo("Error: No signatures loaded. Exiting.", err=True)
-        sys.exit(1)
+        raise Exception("No signatures loaded. Exiting.")
 
     # Parse operation order
     operations = parse_operation_order(ctx, reset_abundance=reset_abundance, trim_singletons=trim_singletons,
@@ -477,9 +450,7 @@ def intersect(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
 
     # Check if output file exists
     if os.path.exists(output_file) and not force:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.")
 
     # Compute intersection
     try:
@@ -491,23 +462,16 @@ def intersect(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         )
         logger.debug(f"Common signature created with name: {common_signature.name}")
     except Exception as e:
-        logger.error(f"Failed to compute intersection of signatures: {e}")
-        click.echo(f"Error: Failed to compute intersection of signatures: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to compute intersection of signatures: {e}") from e
 
     # Export the common signature
     try:
         common_signature.export(output_file)
         click.echo(f"Common signature exported to {output_file}")
-        logger.info(f"Common signature exported to {output_file}")
     except FileExistsError:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.") from None
     except Exception as e:
-        logger.error(f"Failed to export common signature: {e}")
-        click.echo(f"Error: Failed to export common signature: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to export common signature: {e}") from e
 
 
 @ops.command()
@@ -561,19 +525,13 @@ def subtract(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
                     line = line.strip()
                     if line:
                         if not os.path.isfile(line):
-                            logger.error(f"Signature file does not exist: {line}")
-                            click.echo(f"Error: Signature file does not exist: {line}", err=True)
-                            sys.exit(1)
+                            raise Exception(f"Signature file does not exist: {line}")
                         all_sig_paths.append(line)
         except Exception as e:
-            logger.error(f"Failed to read signatures from file {sigs_from_file}: {e}")
-            click.echo(f"Error: Failed to read signatures from file {sigs_from_file}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to read signatures from file {sigs_from_file}: {e}") from e
 
     if len(all_sig_paths) != 2:
-        logger.error("Subtract command requires exactly two signature files: <signature1> <signature2>")
-        click.echo("Error: Subtract command requires exactly two signature files: <signature1> <signature2>", err=True)
-        sys.exit(1)
+        raise Exception("Subtract command requires exactly two signature files: <signature1> <signature2>")
 
     logger.debug(f"Total signature files to process: {len(all_sig_paths)}")
 
@@ -581,13 +539,11 @@ def subtract(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     signatures = load_signatures(all_sig_paths, logger, allow_duplicates=False)
 
     if len(signatures) != 2:
-        logger.error("Failed to load exactly two signatures for subtraction.")
-        click.echo("Error: Failed to load exactly two signatures for subtraction.", err=True)
-        sys.exit(1)
+        raise Exception("Failed to load exactly two signatures for subtraction.")
 
     # Parse operation order
     operations = parse_operation_order(ctx, reset_abundance=reset_abundance, trim_singletons=trim_singletons,
-                                       min_abund=min_abund, max_abund=max_abund, trim_below_median=trim_below_median)
+                min_abund=min_abund, max_abund=max_abund, trim_below_median=trim_below_median)
 
     logger.debug(f"Operations to apply in order: {operations}")
 
@@ -596,9 +552,7 @@ def subtract(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
 
     # Check if output file exists
     if os.path.exists(output_file) and not force:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.")
 
     # Subtract the second signature from the first
     try:
@@ -606,9 +560,7 @@ def subtract(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         primary_sig.subtract(secondary_sig)
         logger.debug(f"Subtracted signature '{secondary_sig.name}' from '{primary_sig.name}'.")
     except Exception as e:
-        logger.error(f"Failed to subtract signatures: {e}")
-        click.echo(f"Error: Failed to subtract signatures: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to subtract signatures: {e}") from e
 
     # Update the name if provided
     if name:
@@ -620,13 +572,9 @@ def subtract(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         click.echo(f"Subtracted signature exported to {output_file}")
         logger.info(f"Subtracted signature exported to {output_file}")
     except FileExistsError:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.") from None
     except Exception as e:
-        logger.error(f"Failed to export subtracted signature: {e}")
-        click.echo(f"Error: Failed to export subtracted signature: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to export subtracted signature: {e}") from e
 
 
 @ops.command()
@@ -680,19 +628,13 @@ def union(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
                     line = line.strip()
                     if line:
                         if not os.path.isfile(line):
-                            logger.error(f"Signature file does not exist: {line}")
-                            click.echo(f"Error: Signature file does not exist: {line}", err=True)
-                            sys.exit(1)
+                            raise Exception(f"Signature file does not exist: {line}")
                         all_sig_paths.append(line)
         except Exception as e:
-            logger.error(f"Failed to read signatures from file {sigs_from_file}: {e}")
-            click.echo(f"Error: Failed to read signatures from file {sigs_from_file}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to read signatures from file {sigs_from_file}: {e}") from e
 
     if not all_sig_paths:
-        logger.error("No signature files provided. Use positional arguments or --sigs-from-file.")
-        click.echo("Error: No signature files provided. Use positional arguments or --sigs-from-file.", err=True)
-        sys.exit(1)
+        raise Exception("No signature files provided. Use positional arguments or --sigs-from-file.")
 
     logger.debug(f"Total signature files to process: {len(all_sig_paths)}")
 
@@ -700,13 +642,11 @@ def union(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     signatures = load_signatures(all_sig_paths, logger, allow_duplicates=False)
 
     if not signatures:
-        logger.error("No signatures loaded. Exiting.")
-        click.echo("Error: No signatures loaded. Exiting.", err=True)
-        sys.exit(1)
+        raise Exception("No signatures loaded. Exiting.")
 
     # Parse operation order
     operations = parse_operation_order(ctx, reset_abundance=reset_abundance, trim_singletons=trim_singletons,
-                                       min_abund=min_abund, max_abund=max_abund, trim_below_median=trim_below_median)
+                    min_abund=min_abund, max_abund=max_abund, trim_below_median=trim_below_median)
 
     logger.debug(f"Operations to apply in order: {operations}")
 
@@ -715,9 +655,7 @@ def union(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
 
     # Check if output file exists
     if os.path.exists(output_file) and not force:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.")
 
     # Compute union
     try:
@@ -729,9 +667,7 @@ def union(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         union_sig._name = name or "union_signature"  # Update the name if provided
         logger.debug(f"Union signature created with name: {union_sig.name}")
     except Exception as e:
-        logger.error(f"Failed to compute union of signatures: {e}")
-        click.echo(f"Error: Failed to compute union of signatures: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to compute union of signatures: {e}") from e
 
     # Export the union signature
     try:
@@ -739,13 +675,9 @@ def union(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         click.echo(f"Union signature exported to {output_file}")
         logger.info(f"Union signature exported to {output_file}")
     except FileExistsError:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.") from None
     except Exception as e:
-        logger.error(f"Failed to export union signature: {e}")
-        click.echo(f"Error: Failed to export union signature: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to export union signature: {e}") from e
 
 
 @ops.command()
@@ -800,19 +732,13 @@ def common(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
                     line = line.strip()
                     if line:
                         if not os.path.isfile(line):
-                            logger.error(f"Signature file does not exist: {line}")
-                            click.echo(f"Error: Signature file does not exist: {line}", err=True)
-                            sys.exit(1)
+                            raise Exception(f"Signature file does not exist: {line}")
                         all_sig_paths.append(line)
         except Exception as e:
-            logger.error(f"Failed to read signatures from file {sigs_from_file}: {e}")
-            click.echo(f"Error: Failed to read signatures from file {sigs_from_file}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to read signatures from file {sigs_from_file}: {e}") from e
 
     if not all_sig_paths:
-        logger.error("No signature files provided. Use positional arguments or --sigs-from-file.")
-        click.echo("Error: No signature files provided. Use positional arguments or --sigs-from-file.", err=True)
-        sys.exit(1)
+        raise Exception("No signature files provided. Use positional arguments or --sigs-from-file.")
 
     logger.debug(f"Total signature files to process: {len(all_sig_paths)}")
 
@@ -820,13 +746,11 @@ def common(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     signatures = load_signatures(all_sig_paths, logger, allow_duplicates=False)
 
     if not signatures:
-        logger.error("No signatures loaded. Exiting.")
-        click.echo("Error: No signatures loaded. Exiting.", err=True)
-        sys.exit(1)
+        raise Exception("No signatures loaded. Exiting.")
 
     # Parse operation order
     operations = parse_operation_order(ctx, reset_abundance=reset_abundance, trim_singletons=trim_singletons,
-                                       min_abund=min_abund, max_abund=max_abund, trim_below_median=trim_below_median)
+                    min_abund=min_abund, max_abund=max_abund, trim_below_median=trim_below_median)
 
     logger.debug(f"Operations to apply in order: {operations}")
 
@@ -835,9 +759,7 @@ def common(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
 
     # Check if output file exists
     if os.path.exists(output_file) and not force:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.")
 
     # Extract common hashes
     try:
@@ -849,9 +771,7 @@ def common(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         common_signature._name = name or "common_hashes_signature"  # Update the name if provided
         logger.debug(f"Common hashes signature created with name: {common_signature.name}")
     except Exception as e:
-        logger.error(f"Failed to extract common hashes: {e}")
-        click.echo(f"Error: Failed to extract common hashes: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to extract common hashes: {e}") from e
 
     # Export the common hashes signature
     try:
@@ -859,17 +779,12 @@ def common(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
         click.echo(f"Common hashes signature exported to {output_file}")
         logger.info(f"Common hashes signature exported to {output_file}")
     except FileExistsError:
-        logger.error(f"Output file '{output_file}' already exists. Use --force to overwrite.")
-        click.echo(f"Error: Output file '{output_file}' already exists. Use --force to overwrite.", err=True)
-        sys.exit(1)
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --force to overwrite.") from None
     except Exception as e:
-        logger.error(f"Failed to export common hashes signature: {e}")
-        click.echo(f"Error: Failed to export common hashes signature: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to export common hashes signature: {e}") from e
 
 def process_experiment(args):
     exp_name, sig_paths, operations, output_dir, force, debug = args
-    # Create logger for this function
     logger = logging.getLogger(f'process_experiment.{exp_name}')
     if debug:
         logger.setLevel(logging.DEBUG)
@@ -901,7 +816,7 @@ def process_experiment(args):
         # Create a mapping from md5sum to list of signatures
         md5_to_signatures = defaultdict(list)
         for sig in signatures:
-            if len(sig):
+            if len(sig.hashes):
                 # here we make sure it's not an empty signature
                 md5_to_signatures[sig.md5sum].append(sig)
             else:
@@ -1065,14 +980,10 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
                 experiment_mapping[exp_name].append(sig_path)
                 total_valid += 1
     except Exception as e:
-        logger.error(f"Failed to read table file {table}: {e}")
-        click.echo(f"Error: Failed to read table file {table}: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to read table file {table}: {e}") from e
 
     if total_valid == 0:
-        logger.error("No valid signature files found in the table. Exiting.")
-        click.echo("Error: No valid signature files found in the table. Exiting.", err=True)
-        sys.exit(1)
+        raise Exception("No valid signature files found in the table. Exiting.")
 
     logger.debug(f"Total lines in table: {total_mapped + total_invalid}")
     logger.debug(f"Total valid signatures: {total_valid}")
@@ -1085,14 +996,10 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
             os.makedirs(output_dir)
             logger.debug(f"Created output directory: {output_dir}")
         except Exception as e:
-            logger.error(f"Failed to create output directory {output_dir}: {e}")
-            click.echo(f"Error: Failed to create output directory {output_dir}: {e}", err=True)
-            sys.exit(1)
+            raise Exception(f"Failed to create output directory {output_dir}: {e}") from e
     else:
         if not os.path.isdir(output_dir):
-            logger.error(f"Output path {output_dir} exists and is not a directory.")
-            click.echo(f"Error: Output path {output_dir} exists and is not a directory.", err=True)
-            sys.exit(1)
+            raise Exception(f"Output path {output_dir} exists and is not a directory.")
 
     # Define operation context
     operations = []
@@ -1160,9 +1067,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
                     report.write(f"Error: {result['error']}\n")
                 report.write("\n" + "-"*50 + "\n\n")
     except Exception as e:
-        logger.error(f"Failed to write report file {report_file}: {e}")
-        click.echo(f"Error: Failed to write report file {report_file}: {e}", err=True)
-        sys.exit(1)
+        raise Exception(f"Failed to write report file {report_file}: {e}") from e
 
     # Summary Report
     total_experiments = len(results)
@@ -1171,9 +1076,9 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
         if r['status'] == 'success':
             successful_experiments += 1
     failed_experiments = total_experiments - successful_experiments
-    # total_skipped = sum(len(r.get('skipped_signatures', [])) for r in results)
     total_skipped = 0
-    total_skipped_due_to_empty = sum(len(r.get('skipped_due_to_empty', [])) for r in results)
+    total_skipped_due_to_empty = sum(len(r['skipped_due_to_empty']) if isinstance(r.get('skipped_due_to_empty', []), list) else 0 for r in results)
+
     for r in results:
         total_skipped += len(r.get('skipped_signatures', []))
 
