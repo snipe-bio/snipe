@@ -557,7 +557,7 @@ def subtract(ctx, sig_files, sigs_from_file, reset_abundance, trim_singletons,
     # Subtract the second signature from the first
     try:
         primary_sig, secondary_sig = signatures
-        primary_sig.subtract(secondary_sig)
+        primary_sig -= secondary_sig
         logger.debug(f"Subtracted signature '{secondary_sig.name}' from '{primary_sig.name}'.")
     except Exception as e:
         raise Exception(f"Failed to subtract signatures: {e}") from e

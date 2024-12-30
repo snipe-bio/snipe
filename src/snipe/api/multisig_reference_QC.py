@@ -766,35 +766,41 @@ class MultiSigReferenceQC:
             
 
         # ============= Coverage Prediction (ROI) =============
-        
+
+        # Check if extra fold predictions are enabled and genome coverage index is sufficient
         if predict_extra_folds and genome_stats["Genome coverage index"] > 0.01:
+            # Initialize dictionaries to store predicted coverages and unique hashes
             predicted_fold_coverage = {}
             predicted_fold_delta_coverage = {}
             predicted_unique_hashes = {}
             predicted_delta_unique_hashes = {}
-            nparts = 30
-            roi_reference_sig = self.reference_sig
+            nparts = 30  # Number of parts to divide the data into for simulation
+            roi_reference_sig = self.reference_sig  # Reference signature for ROI
 
+            # Extract genome-specific signatures from the sample
             _sample_sig_genome = sample_sig & self.reference_sig
 
             hashes = _sample_sig_genome.hashes
             abundances = _sample_sig_genome.abundances
-            N = len(hashes)
+            N = len(hashes)  # Total number of unique hashes
 
+            # Distribute abundances into parts using Dirichlet distribution
             fractions = np.random.dirichlet([1] * nparts, size=N)
             counts = np.round(abundances[:, None] * fractions).astype(int)
             differences = abundances - counts.sum(axis=1)
             indices = np.argmax(counts, axis=1)
-            counts[np.arange(N), indices] += differences
-            counts_cumulative = counts.cumsum(axis=1)
-            cumulative_total_abundances = counts.sum(axis=0).cumsum()
+            counts[np.arange(N), indices] += differences  # Adjust to ensure total counts match
+            counts_cumulative = counts.cumsum(axis=1)  # Cumulative counts across parts
+            cumulative_total_abundances = counts.sum(axis=0).cumsum()  # Cumulative total abundances
 
-            roi_reference_sig.sigtype = SigType.GENOME
+            roi_reference_sig.sigtype = SigType.GENOME  # Set signature type to GENOME
 
+            # Initialize arrays to store cumulative coverage indices and unique hashes
             cumulative_coverage_indices = np.zeros(nparts)
             cumulative_unique_hashes = np.zeros(nparts)
-            total_reference_kmers = len(self.reference_sig)
+            total_reference_kmers = len(self.reference_sig)  # Total reference k-mers
 
+            # Calculate cumulative coverage and unique k-mers for each part
             for i in range(nparts):
                 cumulative_counts = counts_cumulative[:, i]
                 idx = cumulative_counts > 0
@@ -803,6 +809,7 @@ class MultiSigReferenceQC:
                 coverage_index = num_unique_kmers / total_reference_kmers
                 cumulative_coverage_indices[i] = coverage_index
 
+            # Compile coverage depth data for modeling
             coverage_depth_data = []
             for i in range(nparts):
                 coverage_depth_data.append({
@@ -812,14 +819,17 @@ class MultiSigReferenceQC:
                     "cumulative_unique_hashes": cumulative_unique_hashes[i]
                 })
 
+            # Define the saturation model function for curve fitting
             def saturation_model(x, a, b):
                 return a * x / (b + x)
 
+            # Prepare data for unique k-mers saturation model
             x_unique = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
             y_unique = np.array([d["cumulative_unique_hashes"] for d in coverage_depth_data])
-            y_unique = np.maximum.accumulate(y_unique)
+            y_unique = np.maximum.accumulate(y_unique)  # Ensure monotonic increase
             initial_guess_unique = [y_unique[-1], x_unique[int(len(x_unique) / 2)]]
 
+            # Fit the saturation model to unique k-mers data
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", OptimizeWarning)
@@ -834,22 +844,37 @@ class MultiSigReferenceQC:
             except (RuntimeError, OptimizeWarning) as exc:
                 raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.") from exc
 
+            # Check for invalid covariance results
             if np.isinf(covariance_unique).any() or np.isnan(covariance_unique).any():
                 raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.")
+            
+            
 
-            a_unique, b_unique = params_unique
-            # make sure not non and not zero
+            a_unique, b_unique = params_unique  # Extract fitted parameters
+            # Correct total abundance based on sample data
             if sample_sig._bases_count > 0 and sample_sig._bases_count is not None:
-                corrected_total_abundance = sample_sig._bases_count / sample_sig.scale
+                # The above code is calculating the corrected total abundance by dividing the
+                # `_bases_count` attribute of the `sample_sig` object by the `scale` attribute of the
+                # same object.
+                # corrected_total_abundance = sample_sig._bases_count / sample_sig.scale
+                kmer_to_bases_ratio = (sample_total_abundance * sample_sig.scale) / sample_sig._bases_count
+                # ! TODO rename to corrected_genomic_total_abundance
+                corrected_total_abundance = sample_genome_stats["total_abundance"] / kmer_to_bases_ratio
             else:
-                self.logger.warning("Total bases count is zero or None. This will affect the calculation of adjsuted coverage index and k-mer-to-bases ratio.")
+                #! TODO: BUG here (this will not be equal to the previous line)
+                self.logger.warning("Total bases count is zero or None. This will affect the calculation of adjusted coverage index and k-mer-to-bases ratio.")
                 corrected_total_abundance = x_unique[-1]
+                
+            # Predict genomic unique k-mers using the saturation model
+            # a_unique = params_unique[0] = a = saturation point = max unique hashes
+            # b_unique = params_unique[1] = b = total abundance at which saturation occurs
             predicted_genomic_unique_hashes = saturation_model(corrected_total_abundance, a_unique, b_unique)
             current_unique_hashes = y_unique[-1]
-            predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes)
+            # predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes) #! BUG
             delta_unique_hashes = predicted_genomic_unique_hashes - current_unique_hashes
             adjusted_genome_coverage_index = predicted_genomic_unique_hashes / total_reference_kmers if total_reference_kmers > 0 else 0.0
 
+            # Store predicted unique hashes information
             predicted_unique_hashes = {
                 "Predicted genomic unique k-mers": predicted_genomic_unique_hashes,
                 "Delta genomic unique k-mers": delta_unique_hashes,
@@ -877,18 +902,19 @@ class MultiSigReferenceQC:
             if np.isinf(covariance_coverage).any() or np.isnan(covariance_coverage).any():
                 raise RuntimeError("Saturation model fitting for coverage failed.")
 
-            a_coverage, b_coverage = params_coverage
+            a_coverage, b_coverage = params_coverage  # Extract fitted parameters
 
+            # Predict coverage for each extra fold specified
             for extra_fold in predict_extra_folds:
                 if extra_fold < 1:
-                    continue
+                    continue  # Skip invalid fold values
                 
                 #! BETA: Predict the coverage based on the adjusted total abundance
                 # total_abundance = x_total_abundance[-1]
                 predicted_total_abundance = (1 + extra_fold) * corrected_total_abundance # x_total_abundance[-1]
                 predicted_coverage = saturation_model(predicted_total_abundance, a_coverage, b_coverage)
-                max_coverage = 1.0
-                predicted_coverage = min(predicted_coverage, max_coverage)
+                max_coverage = 1.0  # Maximum possible coverage
+                predicted_coverage = min(predicted_coverage, max_coverage)  # Cap coverage at max value
                 predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
                 _delta_coverage = predicted_coverage - y_coverage[-1]
                 predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
