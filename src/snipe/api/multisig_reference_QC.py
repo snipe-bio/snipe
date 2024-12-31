@@ -291,7 +291,7 @@ class MultiSigReferenceQC:
             self.logger.debug("Y chromosome signature provided and passed to the specific_kmers function.")
             self.specific_chr_to_sig['sex-y'] = ychr
         
-        if self.specific_chr_to_sig is not None:
+        if self.specific_chr_to_sig is not None and len(self.specific_chr_to_sig) > 0:
             self.logger.debug("Computing specific chromosome hashes for %s.", ','.join(self.specific_chr_to_sig.keys()))
             self.logger.debug(f"\t-All hashes for chromosomes before getting unique sigs {len(SnipeSig.sum_signatures(list(self.specific_chr_to_sig.values())))}")
             self.specific_chr_to_sig = SnipeSig.get_unique_signatures({sig_name: sig for sig_name, sig in self.specific_chr_to_sig.items() if not sig_name.endswith("-snipegenome")})
