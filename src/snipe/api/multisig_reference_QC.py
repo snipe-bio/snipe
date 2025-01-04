@@ -501,6 +501,10 @@ class MultiSigReferenceQC:
         _z_error_rate_raw_y = (sample_sig.count_singletons() / sample_sig.total_abundance) - _tmp_x
         predicted_error_contamination_index["z_error_rate_raw_y"] = _z_error_rate_raw_y * 100
         
+        # genomic singltons
+        predicted_error_contamination_index["genomic_singletons"] = _sample_ref_singletons
+        
+        
         # ============= Advanced Stats if needed =============
         if advanced:
             # Copy sample signature to avoid modifying the original
