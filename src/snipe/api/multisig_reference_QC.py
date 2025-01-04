@@ -488,7 +488,18 @@ class MultiSigReferenceQC:
         # predict error and contamination index
         predicted_error_contamination_index["Predicted contamination index"] = predicted_contamination_index
         predicted_error_contamination_index["Sequencing errors index"] = predicted_error_index
-
+        
+        #! TODO raw sketch singletons / raw sketch total abundance
+        #! DEV NEW TEST PARAM
+        _sample_ref = sample_sig & self.reference_sig
+        _sample_ref_singletons = _sample_ref.count_singletons()
+        _tmp_x = (_sample_ref_singletons / _sample_ref.total_abundance if _sample_ref.total_abundance is not None and _sample_ref.total_abundance > 0 else 0)
+        _tmp_y = (sample_nonref_singletons / sample_nonref.total_abundance if sample_nonref.total_abundance is not None and sample_nonref.total_abundance > 0 else 0)
+        _tmp_z_error_rate = _tmp_y - _tmp_x
+        predicted_error_contamination_index["z_error_rate"] = _tmp_z_error_rate * 100
+        
+        _z_error_rate_raw_y = (sample_sig.count_singletons() / sample_sig.total_abundance) - _tmp_x
+        predicted_error_contamination_index["z_error_rate_raw_y"] = _z_error_rate_raw_y * 100
         
         # ============= Advanced Stats if needed =============
         if advanced:
