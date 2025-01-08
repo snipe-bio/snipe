@@ -16,7 +16,7 @@ Snipe is only tested in the mammalian space.
 
 ## Installation
 
-Available on [Bioconda](https://anaconda.org/bioconda/snipe) [Pypi test channel](https://test.pypi.org/project/snipe/), and we are currently trying to claim the project name on [Pypi](https://github.com/pypi/support/issues/4364).
+Available on [Bioconda](https://anaconda.org/bioconda/snipe), [Pypi test channel](https://test.pypi.org/project/snipe/), and we are currently trying to claim the project name on [Pypi](https://github.com/pypi/support/issues/4364).
 
 ## Publication
 
