@@ -842,7 +842,7 @@ def process_experiment(args):
         # Update the result with merged and skipped signatures
         result['merged_signatures'] = [os.path.basename(sig.name) for sig in signatures]
         result['skipped_signatures'] = skipped_signatures
-        result['skipped_due_to_empty'] = skipped_due_to_empty
+        result['skipped_due_to_empty'] = skipped_due_to_empty   
 
     except Exception as e:
         result['status'] = 'failure'
@@ -1025,7 +1025,7 @@ def guided_merge(ctx, table, output_dir, reset_abundance, trim_singletons,
     if cores > 1:
         with ProcessPoolExecutor(max_workers=cores) as executor:
             future_to_exp = {executor.submit(process_experiment, args): args[0] for args in experiments_args}
-            for future in tqdm(as_completed(future_to_exp), total=len(future_to_exp), desc="Processing experiments"):
+            for future in tqdm(as_completed(future_to_exp), total=len(future_to_exp), desc="Processing experiments", file=sys.stderr):
                 exp_name = future_to_exp[future]
                 try:
                     result = future.result()

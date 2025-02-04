@@ -800,12 +800,26 @@ class MultiSigReferenceQC:
             N = len(hashes)  # Total number of unique hashes
 
             # Distribute abundances into parts using Dirichlet distribution
-            fractions = np.random.dirichlet([1] * nparts, size=N)
-            counts = np.round(abundances[:, None] * fractions).astype(int)
-            differences = abundances - counts.sum(axis=1)
-            indices = np.argmax(counts, axis=1)
-            counts[np.arange(N), indices] += differences  # Adjust to ensure total counts match
-            counts_cumulative = counts.cumsum(axis=1)  # Cumulative counts across parts
+            # Instead of using Dirichlet distribution, perform random shuffling and round-robin splitting.
+            total_repeats = []  # List to hold repeated hash indices based on their abundances
+            for idx, abundance in enumerate(abundances):
+                # Append the index 'idx' abundance times to the list
+                total_repeats.extend([idx] * abundance)
+            
+            # Shuffle the list of repeated hash indices randomly
+            np.random.shuffle(total_repeats)
+            
+            # Initialize a matrix to store counts: shape (number of unique hashes, nparts)
+            counts = np.zeros((N, nparts), dtype=int)
+            
+            # Distribute shuffled hashes round-robin into parts
+            for j, hash_idx in enumerate(total_repeats):
+                part_index = j % nparts
+                counts[hash_idx, part_index] += 1
+            
+            # Compute cumulative counts across parts as before
+            counts_cumulative = counts.cumsum(axis=1)
+            
             cumulative_total_abundances = counts.sum(axis=0).cumsum()  # Cumulative total abundances
 
             roi_reference_sig.sigtype = SigType.GENOME  # Set signature type to GENOME
@@ -879,7 +893,7 @@ class MultiSigReferenceQC:
                 #! TODO: BUG here (this will not be equal to the previous line)
                 self.logger.warning("Total bases count is zero or None. This will affect the calculation of adjusted coverage index and k-mer-to-bases ratio.")
                 corrected_total_abundance = x_unique[-1]
-                
+
             # Predict genomic unique k-mers using the saturation model
             # a_unique = params_unique[0] = a = saturation point = max unique hashes
             # b_unique = params_unique[1] = b = total abundance at which saturation occurs
@@ -926,10 +940,11 @@ class MultiSigReferenceQC:
                 
                 #! BETA: Predict the coverage based on the adjusted total abundance
                 # total_abundance = x_total_abundance[-1]
-                predicted_total_abundance = (1 + extra_fold) * corrected_total_abundance # x_total_abundance[-1]
+                predicted_total_abundance = (1 + extra_fold) * sample_genome_stats["total_abundance"] # * corrected_total_abundance # x_total_abundance[-1]
                 predicted_coverage = saturation_model(predicted_total_abundance, a_coverage, b_coverage)
                 max_coverage = 1.0  # Maximum possible coverage
-                predicted_coverage = min(predicted_coverage, max_coverage)  # Cap coverage at max value
+                #! CAPPED to maximum coverage
+                # predicted_coverage = min(predicted_coverage, max_coverage)  # Cap coverage at max value
                 predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
                 _delta_coverage = predicted_coverage - y_coverage[-1]
                 predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
