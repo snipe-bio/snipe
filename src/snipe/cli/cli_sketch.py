@@ -175,7 +175,7 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
             # Modify sample name for clarity
             snipe_modification_to_name = f"{name}-snipesample"
             # Perform sample sketching
-            sample_signature, total_bases = sketcher.sample_sketch(
+            sample_signature, total_bases, total_valid_kmers = sketcher.sample_sketch(
                 filename=sample,
                 sample_name=snipe_modification_to_name,
                 num_processes=cores,
@@ -189,7 +189,10 @@ def sketch(ctx, sample: Optional[str], ref: Optional[str], amplicon: Optional[st
                 output_file,
             )
             
-            click.echo(f"Sample {snipe_modification_to_name} sketching completed with {total_bases} bases")
+            click.echo(
+                f"Sample {snipe_modification_to_name} sketching completed with {total_bases} bases "
+                f"and {total_valid_kmers} valid k-mers."
+            )
 
         elif sig_type == SigType.GENOME:
             # Print sketching parameters for user information

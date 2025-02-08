@@ -172,6 +172,8 @@ class SnipeSig:
         self._track_abundance = _sourmash_sig.minhash.track_abundance
         self._bases_count = 0
         self._flag_bases_updated = False
+        self._valid_kmers_count = 0
+        self._flag_valid_kmers_updated = False
         
         if "-snipesample" in self._name:
             self._name = self._name.replace("-snipesample", "")
@@ -182,6 +184,12 @@ class SnipeSig:
                 self.logger.debug("Found reported bases count in the name: %d", self._bases_count)
                 self._name = re.sub(r";snipe_bases=([0-9]+)", "", self._name)
 
+            match_valid = re.search(r";snipe_valid_kmers=([0-9]+)", self._name)    
+            if match_valid:
+                self._valid_kmers_count = int(match_valid.group(1))
+                self.logger.debug("Found reported valid kmers count in the name: %d", self._valid_kmers_count)
+                self._name = re.sub(r";snipe_valid_kmers=([0-9]+)", "", self._name)
+                self.logger.debug("Found a sample signature with the snipe suffix `-snipesample`. Restoring original name `%s`.", self._name)
             self.logger.debug("Found a sample signature with the snipe suffix `-snipesample`. Restoring original name `%s`.", self._name)
             
         elif self._name.endswith("-snipeamplicon"):
@@ -316,6 +324,19 @@ class SnipeSig:
         self._bases_count = new_bases_count
         self._flag_bases_updated = True
     
+    @property
+    def valid_kmers(self) -> int:
+        r"""Return the valid kmers count of the signature."""
+        return self._valid_kmers_count
+
+    @valid_kmers.setter
+    def valid_kmers(self, new_valid_kmers: int):
+        r"""
+        Set the valid kmers count of the signature.
+        """
+        self._valid_kmers_count = new_valid_kmers
+        self._flag_valid_kmers_updated = True
+    
     def _create_signame_for_export(self):
         _name = self._name
         # make sure we remove all the snipe suffixes
@@ -323,8 +344,11 @@ class SnipeSig:
         _name = _name.replace("-snipeamplicon", "")
         _name = _name.replace("-snipegenome", "")
         _name = re.sub(r";snipe_bases=([0-9]+)", "", _name)
+        _name = re.sub(r";snipe_valid_kmers=([0-9]+)", "", _name)
         if self._flag_bases_updated:
             _name += f"-snipesample;snipe_bases={self._bases_count}"
+        if self._flag_valid_kmers_updated:
+            _name += f";snipe_valid_kmers={self._valid_kmers_count}"
         return _name
     
     # setter sigtype
@@ -1016,9 +1040,11 @@ class SnipeSig:
         scale = first_sig.scale
         track_abundance = first_sig.track_abundance
         total_bases = first_sig._bases_count
-
+        total_valid_kmers = first_sig._valid_kmers_count
+        
         for sig in signatures[1:]:
             total_bases += sig._bases_count
+            total_valid_kmers += sig._valid_kmers_count
             if sig.ksize != ksize or sig.scale != scale:
                 raise ValueError("All signatures must have the same ksize and scale.")
 
@@ -1090,6 +1116,7 @@ class SnipeSig:
             enable_logging=enable_logging
         )
         summed_signature.bases = total_bases
+        summed_signature.valid_kmers = total_valid_kmers
         return summed_signature
     
     @staticmethod
@@ -1291,7 +1318,34 @@ class SnipeSig:
         Returns:
             SnipeSig: A new instance that is a copy of self.
         """
-        return SnipeSig(sourmash_sig=self.export_to_string(), sig_type=self.sigtype, enable_logging=self.logger.level <= logging.DEBUG)
+        new_sig = SnipeSig(
+            sourmash_sig=self.export_to_string(),
+            sig_type=self.sigtype,
+            enable_logging=self.logger.level <= logging.DEBUG
+        )
+        new_sig._bases_count = self._bases_count
+        new_sig._flag_bases_updated = self._flag_bases_updated
+        new_sig._valid_kmers_count = self._valid_kmers_count
+        new_sig._flag_valid_kmers_updated = self._flag_valid_kmers_updated
+        return new_sig
+    
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SnipeSig):
+            return NotImplemented
+        if not np.array_equal(self._hashes, other._hashes):
+            return False
+        if not np.array_equal(self._abundances, other._abundances):
+            return False
+        # Compare other key attributes
+        return (
+            self._ksize == other._ksize and
+            self._scale == other._scale and
+            self._bases_count == other._bases_count and
+            self._valid_kmers_count == other._valid_kmers_count and
+            self._name == other._name and
+            self._filename == other._filename and
+            self._track_abundance == other._track_abundance
+        )
 
     # Implement the __radd__ method to support sum()
     def __radd__(self, other: Union[int, 'SnipeSig']) -> 'SnipeSig':
@@ -1408,7 +1462,7 @@ class SnipeSig:
         The updated hash set \\( H' \\) is:
 
         $$
-        H' = \\{ h \in H \mid a(h) \geq m \\}
+        H' = \\{ h \in H \mid a(h) \g m \\}
         $$
 
         **Raises**:
@@ -1422,7 +1476,7 @@ class SnipeSig:
             return
 
         median = np.median(self._abundances)
-        mask = self._abundances >= median
+        mask = self._abundances > median
         self._apply_mask(mask)
         self.logger.debug("Trimmed hashes with abundance below median (%f).", median)
 
@@ -1539,6 +1593,7 @@ class SnipeSig:
             stats["median_abundance"] = self.median_abundance
             stats["num_singletons"] = self.count_singletons()
             stats["snipe_bases"] = self._bases_count
+            stats["snipe_valid_kmers"] = self._valid_kmers_count
         return stats
 
     @property

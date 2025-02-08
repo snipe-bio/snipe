@@ -8,10 +8,9 @@ import sys
 import threading
 import queue
 from typing import Any, Dict, List, Optional, Tuple
-from pyfastx import Fastx as SequenceReader # pylint: disable=no-name-in-module
+from pyfastx import Fastx as SequenceReader  # pylint: disable=no-name-in-module
 import sourmash
 from pathos.multiprocessing import ProcessingPool as Pool
-
 
 
 class SnipeSketch:
@@ -65,12 +64,19 @@ class SnipeSketch:
         batch_size: int = 100_000,
         ksize: int = 51,
         scaled: int = 10_000,
-    ) -> sourmash.MinHash:
+    ) -> Tuple[sourmash.MinHash, int, int]:
         """
         Process a subset of sequences to create a FracMinHash sketch.
 
         Each process creates its own MinHash instance and processes sequences
         assigned based on the thread ID. Progress is reported via a shared queue.
+
+        In addition to counting the total bases, this function now also sums the
+        total number of valid k-mers across all sequences. A valid k-mer is counted
+        only when the sequence does not contain any ambiguous base ('N' or 'n'). The
+        number of valid k-mers for a sequence is calculated as:
+        
+            max(0, len(seq) - ksize + 1)
 
         Args:
             fasta_file (str): Path to the FASTA file.
@@ -82,19 +88,26 @@ class SnipeSketch:
             scaled (int, optional): Scaling factor for MinHash. Defaults to 10_000.
 
         Returns:
-            sourmash.MinHash: The resulting FracMinHash sketch.
+            Tuple[sourmash.MinHash, int, int]: The resulting FracMinHash sketch, the total number
+            of bases processed, and the total count of valid k-mers.
         """
         self._register_signal_handler()
         try:
             fa_reader = SequenceReader(fasta_file)
-            mh = sourmash.MinHash(
-                n=0, ksize=ksize, scaled=scaled, track_abundance=True
-            )
+            mh = sourmash.MinHash(n=0, ksize=ksize, scaled=scaled, track_abundance=True)
             local_count = 0
             base_count = 0
+            valid_kmers_count = 0
 
-            for idx, (_, seq) in enumerate(fa_reader):
+            for idx, _ in enumerate(fa_reader):
+                seq = _[1]
                 if idx % total_threads == thread_id:
+
+                    # counting valid kmers
+                    segments = re.split(r"[Nn]+", seq)
+                    seq_valid_kmers = sum(max(0, len(segment) - ksize + 1) for segment in segments)
+                    valid_kmers_count += seq_valid_kmers
+
                     mh.add_sequence(seq, force=True)
                     local_count += 1
                     base_count += len(seq)
@@ -107,9 +120,10 @@ class SnipeSketch:
                 progress_queue.put(local_count)
 
             self.logger.debug(
-                "Thread %d processed %d hashes.", thread_id, len(mh)
+                "Thread %d processed %d hashes. Base count: %d, Valid k-mers count: %d",
+                thread_id, len(mh), base_count, valid_kmers_count
             )
-            return mh, base_count
+            return mh, base_count, valid_kmers_count
 
         except KeyboardInterrupt:
             self.logger.warning("KeyboardInterrupt detected in process_sequences.")
@@ -178,9 +192,13 @@ class SnipeSketch:
         k_size: int = 51,
         scale: int = 10_000,
         **kwargs: Any,
-    ) -> Tuple[sourmash.SourmashSignature, int]:
+    ) -> Tuple[sourmash.SourmashSignature, int, int]:
         """
         Create a FracMinHash sketch for a sample using parallel processing.
+
+        This method now aggregates not only the total number of bases processed but also
+        the total number of valid k-mers across all sequences. The sample name is updated
+        to include both metrics for quality control (QC).
 
         Args:
             sample_name (str): Name of the sample.
@@ -193,7 +211,8 @@ class SnipeSketch:
             **kwargs (Any): Additional keyword arguments.
 
         Returns:
-            Tuple[sourmash.SourmashSignature, int]: The resulting signature and total bases processed.
+            Tuple[sourmash.SourmashSignature, int, int]:
+                The resulting signature, the total bases processed, and the total valid k-mers.
         """
         self.logger.info("Starting sketching with %d processes...", num_processes)
 
@@ -250,14 +269,19 @@ class SnipeSketch:
 
         minhashes = []
         total_bases = 0
-        
+        total_valid_kmers = 0
+
         for idx, result in enumerate(results):
             try:
-                mh, base_count = result.get()
+                mh, base_count, valid_kmers_count = result.get()
                 if mh:
                     minhashes.append(mh)
                     total_bases += base_count
-                    self.logger.debug("MinHash from thread %d collected with %d bases.", idx, base_count)
+                    total_valid_kmers += valid_kmers_count
+                    self.logger.debug(
+                        "MinHash from thread %d collected with %d bases and %d valid kmers.",
+                        idx, base_count, valid_kmers_count
+                    )
             except Exception as e:
                 self.logger.error("Error retrieving MinHash from thread %d: %s", idx, e)
 
@@ -269,13 +293,16 @@ class SnipeSketch:
         for mh in minhashes[1:]:
             mh_full.merge(mh)
             
-        # append number of bases to the signature name for QC purposes
-        sample_name += f";snipe_bases={total_bases}"
+        # Append number of bases and valid k-mers to the signature name for QC purposes.
+        sample_name += f";snipe_bases={total_bases};snipe_valid_kmers={total_valid_kmers}"
 
         signature = sourmash.SourmashSignature(mh_full, name=sample_name)
-        self.logger.info("Sketching completed for sample: %s with total bases: %d", sample_name, total_bases)
+        self.logger.info(
+            "Sketching completed for sample: %s with total bases: %d and valid kmers: %d",
+            sample_name, total_bases, total_valid_kmers
+        )
 
-        return signature, total_bases
+        return signature, total_bases, total_valid_kmers
 
     def sample_sketch(
         self,
@@ -286,7 +313,7 @@ class SnipeSketch:
         ksize: int,
         scale: int,
         **kwargs: Any,
-    ) -> sourmash.SourmashSignature:
+    ) -> Tuple[sourmash.SourmashSignature, int, int]:
         """
         Generate a sketch for a sample and return its signature.
 
@@ -300,14 +327,15 @@ class SnipeSketch:
             **kwargs (Any): Additional keyword arguments.
 
         Returns:
-            sourmash.SourmashSignature: The generated signature.
+            Tuple[sourmash.SourmashSignature, int, int]:
+                The generated signature, total bases, and total valid k-mers.
 
         Raises:
             RuntimeError: If an error occurs during sketching.
         """
         self.logger.info("Starting sample sketch for: %s", sample_name)
         try:
-            signature, total_bases = self._sketch_sample(
+            signature, total_bases, total_valid_kmers = self._sketch_sample(
                 sample_name=sample_name,
                 fasta_file=filename,
                 num_processes=num_processes,
@@ -316,8 +344,11 @@ class SnipeSketch:
                 scale=scale,
                 **kwargs,
             )
-            self.logger.info("Sample sketch completed for: %s, with total number of %d bases", sample_name, total_bases)
-            return signature, total_bases
+            self.logger.info(
+                "Sample sketch completed for: %s, with total number of %d bases and %d valid kmers",
+                sample_name, total_bases, total_valid_kmers
+            )
+            return signature, total_bases, total_valid_kmers
         except Exception as e:
             self.logger.error(
                 "Error occurred during sample sketching: %s", str(e)
