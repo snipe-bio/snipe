@@ -563,7 +563,7 @@ class SnipeSig:
         self.logger.debug("Union operation completed. Total hashes: %d", len(unique_hashes))
 
         # Create a new SnipeSig instance
-        return self.create_from_hashes_abundances(
+        result = self.create_from_hashes_abundances(
             hashes=unique_hashes,
             abundances=summed_abundances,
             ksize=self._ksize,
@@ -572,6 +572,10 @@ class SnipeSig:
             filename=None,
             enable_logging=self.logger.level <= logging.DEBUG
         )
+        
+        result.bases = self.bases + other.bases
+        result.valid_kmers = self.valid_kmers + other.valid_kmers
+        return result
 
     def _convert_to_sourmash_signature(self):
         r"""

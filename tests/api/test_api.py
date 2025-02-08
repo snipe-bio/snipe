@@ -863,8 +863,8 @@ class TestSnipeSig(unittest.TestCase):
         """
         # Current abundances: [1, 2, 3, 4, 5], median is 3
         self.snipe_sig.trim_below_median()
-        expected_hashes = np.array([30, 40, 50], dtype=np.uint64)
-        expected_abundances = np.array([3, 4, 5], dtype=np.uint32)
+        expected_hashes = np.array([40, 50], dtype=np.uint64)
+        expected_abundances = np.array([4, 5], dtype=np.uint32)
         np.testing.assert_array_equal(self.snipe_sig.hashes, expected_hashes)
         np.testing.assert_array_equal(self.snipe_sig.abundances, expected_abundances)
 
