@@ -441,7 +441,7 @@ class SnipeSketch:
         """
         self.logger.info("Starting parallel genome sketching with %d cores.", cores)
         fa_reader = SequenceReader(fasta_file, comment=True)
-        mh_full = sourmash.MinHash(n=0, ksize=ksize, scaled=scale)
+        mh_full = sourmash.MinHash(n=0, ksize=ksize, scaled=scale, track_abundance=True)
         chr_to_mh: Dict[str, sourmash.MinHash] = {}
 
         mh_lock = threading.Lock()
