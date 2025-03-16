@@ -1,15 +1,58 @@
 import logging
 import warnings
 from typing import Any, Dict, List, Optional
-
+from sklearn.mixture import GaussianMixture
+from scipy.stats import norm, poisson, chisquare
 import numpy as np
 from scipy.optimize import OptimizeWarning, curve_fit
 from snipe.api.snipe_sig import SnipeSig
 from snipe.api.enums import SigType
 import os
 from snipe.api.reference_QC import ReferenceQC
+from sklearn.exceptions import ConvergenceWarning
 
 # pylint disable C0301
+
+def check_poisson_fit(frequencies):
+    """
+    Check if a set of observed frequencies follows a Poisson distribution.
+    Uses the chi-square goodness-of-fit test.
+    
+    Parameters:
+        frequencies (list or np.array): Observed frequencies (counts of occurrences of different event values)
+    
+    Returns:
+        p_value (float): p-value from the chi-square test. A high p-value (>0.05) suggests Poisson fit.
+    """
+    # Compute the mean (lambda) of the observed frequencies
+    lambda_hat = np.mean(frequencies)
+    
+    # Generate expected Poisson probabilities
+    max_val = max(frequencies)  # Find the maximum observed value
+    x_vals = np.arange(0, max_val + 1)
+    expected_probs = poisson.pmf(x_vals, lambda_hat)
+    
+    # Compute expected counts
+    total_count = len(frequencies)
+    expected_counts = expected_probs * total_count
+    
+    # Ensure no expected count is too small (combine small bins if needed)
+    threshold = 5  # Minimum expected count threshold
+    observed_counts, _ = np.histogram(frequencies, bins=np.arange(max_val + 2))
+    
+    mask = expected_counts >= threshold
+    if not np.all(mask):
+        observed_counts = np.append(observed_counts[mask], np.sum(observed_counts[~mask]))
+        expected_counts = np.append(expected_counts[mask], np.sum(expected_counts[~mask]))
+    
+    # Normalize counts to ensure sum consistency
+    expected_counts *= np.sum(observed_counts) / np.sum(expected_counts)
+    
+    # Perform chi-square test
+    chi2_stat, p_value = chisquare(observed_counts, expected_counts)
+    
+    return p_value
+
 
 class MultiSigReferenceQC:
     r"""
@@ -245,10 +288,12 @@ class MultiSigReferenceQC:
                  varsigs: Optional[List[SnipeSig]] = None,
                  enable_logging: bool = False,
                  export_varsigs: bool = False,
+                 repetitive_aware: bool = True,
                  custom_logger: Optional[logging.Logger] = None,
                  **kwargs):
         
         self.logger = custom_logger or logging.getLogger(__name__)
+        self.repetitive_aware_flag = repetitive_aware
         
         # Initialize split cache
         self._split_cache: Dict[int, List[SnipeSig]] = {}
@@ -309,12 +354,10 @@ class MultiSigReferenceQC:
             # make sure they are same ksize and scale as reference_sig
             for sig in varsigs:
                 if sig.ksize != reference_sig.ksize:
-                    self.logger.error("K-mer sizes do not match: varsigs.ksize=%d vs reference_sig.ksize=%d",
-                                      sig.ksize, reference_sig.ksize)
+                    self.logger.error("K-mer sizes do not match: varsigs.ksize=%d vs reference_sig.ksize=%d", sig.ksize, reference_sig.ksize)
                     raise ValueError(f"varsigs ksize ({sig.ksize}) does not match reference_sig ksize ({reference_sig.ksize}).")
                 if sig.scale != reference_sig.scale:
-                    self.logger.error("Scale values do not match: varsigs.scale=%d vs reference_sig.scale=%d",
-                                      sig.scale, reference_sig.scale)
+                    self.logger.error("Scale values do not match: varsigs.scale=%d vs reference_sig.scale=%d", sig.scale, reference_sig.scale)
                     raise ValueError(f"varsigs scale ({sig.scale}) does not match reference_sig scale ({reference_sig.scale}).")
             self.variance_sigs = varsigs
 
@@ -327,8 +370,19 @@ class MultiSigReferenceQC:
         self.enable_logging = enable_logging
         self.export_varsigs = export_varsigs
         self.sample_to_stats = {}
+        
+        #! New: repetitive k-mers awareness
+        self.repetitive_hashes_sig = self.reference_sig.copy()
+        self.repetitive_hashes_sig.trim_singletons()
+        self.logger.debug(f"Repetitive k-mers: {self.repetitive_hashes_sig}")
+        if len(self.repetitive_hashes_sig) > 0:
+            self.reference_without_repeats = self.reference_sig - self.repetitive_hashes_sig
+        else:
+            self.reference_without_repeats = self.reference_sig.copy()
+        self.logger.debug(f"Reference without repeats: {len(self.reference_without_repeats)}")
 
-    def process_sample(self, sample_sig: SnipeSig, predict_extra_folds: Optional[List[int]] = None, advanced: Optional[bool] = False, enable_ci: Optional[bool] = True) -> Dict[str, Any]:
+
+    def process_sample(self, sample_sig: SnipeSig, predict_extra_folds: Optional[List[int]] = None, advanced: Optional[bool] = False) -> Dict[str, Any]:
 
         # ============= Attributes =============
 
@@ -386,14 +440,15 @@ class MultiSigReferenceQC:
             "k-mer median abundance": sample_stats_raw["median_abundance"],
             "singleton k-mers": sample_stats_raw["num_singletons"],
             "snipe bases": sample_stats_raw["snipe_bases"],
+            "snipe valid k-mers": sample_sig.valid_kmers,
             "k-mer-to-bases ratio": (
                 (sample_stats_raw["total_abundance"] * sample_stats_raw["scale"]) / sample_stats_raw["snipe_bases"]
                 if sample_stats_raw["snipe_bases"] > 0 else 0
             ),
-
         })
 
         # ============= GENOME STATS =============
+    
 
         self.logger.debug("Calculating genome statistics.")
         # Compute intersection of sample and reference genome
@@ -401,13 +456,22 @@ class MultiSigReferenceQC:
         sample_genome = sample_sig & self.reference_sig
 
         sample_genome_stats = sample_genome.get_sample_stats
+        
+        
+        
+        #! New repetitive k-mers awareness
+        abundance_based_sample_genome_stats = sample_genome_stats
+        if self.repetitive_aware_flag:
+            sample_genome_non_repetitive = sample_genome.copy()
+            sample_genome_non_repetitive = sample_genome_non_repetitive & self.reference_without_repeats
+            abundance_based_sample_genome_stats = sample_genome_non_repetitive.get_sample_stats 
+            
 
         genome_stats.update({
             "Genomic unique k-mers": sample_genome_stats["num_hashes"],
-            "Genomic k-mers total abundance": sample_genome_stats["total_abundance"],
-            "Genomic k-mers mean abundance": sample_genome_stats["mean_abundance"],
-            "Genomic k-mers median abundance": sample_genome_stats["median_abundance"],
-
+            "Genomic k-mers total abundance": abundance_based_sample_genome_stats["total_abundance"],
+            "Genomic k-mers mean abundance": abundance_based_sample_genome_stats["mean_abundance"],
+            "Genomic k-mers median abundance": abundance_based_sample_genome_stats["median_abundance"],
             "Genome coverage index": (
                 sample_genome_stats["num_hashes"] / len(self.reference_sig)
                 if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
@@ -417,6 +481,122 @@ class MultiSigReferenceQC:
                 if sample_stats.get("k-mer total abundance", 0) > 0 and sample_genome_stats["total_abundance"] is not None else 0
             ),
         })
+
+
+        #! New corrected coverage and mean abundance
+        kmer_yield = None
+        kmers_to_bases = 1
+        
+        if sample_sig.bases is not None and sample_sig.bases > 0:
+            kmers_to_bases =  (sample_sig.total_abundance * sample_sig.scale) / sample_sig.bases if sample_sig.bases is not None and sample_sig.total_abundance is not None and sample_sig.total_abundance > 0 else 0    
+            if sample_sig.valid_kmers is not None and sample_sig.valid_kmers > 0:
+                kmer_yield = (sample_sig.valid_kmers / sample_sig.bases)
+        
+        sample_stats["kmer_yield"]= kmer_yield
+        sample_stats["kmers_to_bases"] = kmers_to_bases
+
+        if kmers_to_bases > 0:
+            genome_stats["corrected genome coverage index"] = (
+                1 - (1 - sample_genome_stats["num_hashes"] / len(self.reference_sig))**(1/kmers_to_bases)
+                if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
+            )
+            
+            genome_stats["corrected genomic total abundance"] = (
+                abundance_based_sample_genome_stats["total_abundance"] / kmers_to_bases
+                if abundance_based_sample_genome_stats["total_abundance"] is not None else 0
+            )
+            
+            genome_stats["corrected genomic mean abundance"] = (
+                genome_stats["corrected genomic total abundance"] /  (genome_stats["corrected genome coverage index"]* len(self.reference_sig))
+            )
+
+        # =============== GMM stats ================
+        
+        def minimifed_gmm(abundances):
+            try:
+                # Suppress specific warnings during computation
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", ConvergenceWarning)
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    # Treat division and invalid operations as exceptions within this block
+                    with np.errstate(divide='raise', invalid='raise'):
+                        # Convert to numpy array and filter out non-positive values
+                        abundances = np.array(abundances)
+                        abundances = abundances[abundances > 0]
+                        if len(abundances) == 0:
+                            return 0, 0, 0
+
+                        # Log-transform (base-10) and ensure there are at least two unique values
+                        log_abund = np.log10(abundances).reshape(-1, 1)
+                        if len(np.unique(log_abund)) < 2:
+                            return 0, 0, 0
+
+                        # Fit a 2-component Gaussian Mixture Model
+                        gmm = GaussianMixture(n_components=2, random_state=42)
+                        gmm.fit(log_abund)
+
+                        # Extract parameters
+                        means = gmm.means_.flatten()
+                        sigmas = np.sqrt(gmm.covariances_.flatten())
+                        weights = gmm.weights_.flatten()
+
+                        # Check for near-zero sigmas or weights
+                        if np.any(np.isclose(sigmas, 0)) or np.any(np.isclose(weights, 0)):
+                            return 0, 0, 0
+
+                        # Order components so that the lower mean is considered the off-target (mu_low)
+                        if means[0] < means[1]:
+                            mu_low, sigma_low, w_low = means[0], sigmas[0], weights[0]
+                            mu_high, sigma_high, w_high = means[1], sigmas[1], weights[1]
+                        else:
+                            mu_low, sigma_low, w_low = means[1], sigmas[1], weights[1]
+                            mu_high, sigma_high, w_high = means[0], sigmas[0], weights[0]
+
+                        # Extra safeguard against division by zero
+                        if (np.isclose(sigma_low, 0) or np.isclose(sigma_high, 0) or 
+                            np.isclose(w_low, 0) or np.isclose(w_high, 0)):
+                            return 0, 0, 0
+
+                        # Compute parameters for finding the intersection (in log-space)
+                        D = np.log((w_low * sigma_high) / (w_high * sigma_low))
+                        A = 1 / (2 * sigma_low**2) - 1 / (2 * sigma_high**2)
+                        B = -mu_low / (sigma_low**2) + mu_high / (sigma_high**2)
+                        C = (mu_low**2 / (2 * sigma_low**2)) - (mu_high**2 / (2 * sigma_high**2)) - D
+
+                        # Avoid division by zero in computing intersection
+                        if np.isclose(B, 0):
+                            return 0, 0, 0
+
+                        if np.abs(A) < 1e-8:
+                            intersection_log = -C / B
+                        else:
+                            roots = np.roots([A, B, C])
+                            real_roots = roots[np.isreal(roots)].real
+                            if real_roots.size == 0:
+                                return 0, 0, 0
+                            intersection_log = None
+                            for r in real_roots:
+                                if r >= min(mu_low, mu_high) and r <= max(mu_low, mu_high):
+                                    intersection_log = r
+                                    break
+                            if intersection_log is None:
+                                intersection_log = real_roots[np.argmin(np.abs(real_roots - (mu_low + mu_high) / 2))]
+
+                        # Back-transform threshold to the original scale
+                        threshold = 10 ** intersection_log
+
+                        # Compute d' (separation in pooled standard deviation units)
+                        d_prime = np.abs(mu_high - mu_low) / np.sqrt((sigma_low**2 + sigma_high**2) / 2)
+
+                        # Compute the overlap coefficient between the two distributions
+                        overlap = 2 * norm.cdf(-d_prime / 2)
+
+                        return d_prime, overlap, threshold
+            except Exception:
+                return 0, 0, 0
+
+        genome_stats["genomic_dprime"], genome_stats["genomic_overlap"], genome_stats["genomic_threshold"] = minimifed_gmm(sample_genome.abundances)           
+        sample_stats["sample_dprime"], sample_stats["sample_overlap"], sample_stats["sample_threshold"] = minimifed_gmm(sample_sig.abundances)
 
         # ============= AMPLICON STATS =============
         if self.amplicon_sig is not None:
@@ -438,17 +618,43 @@ class MultiSigReferenceQC:
             self.logger.debug("Calculating amplicon statistics.")
             sample_amplicon = sample_sig & self.amplicon_sig
             sample_amplicon_stats = sample_amplicon.get_sample_stats
+            
+            #! New repetitive k-mers awareness
+            abundance_based_sample_amplicon_stats = {}
+            if self.repetitive_aware_flag:
+                sample_amplicon_copy_for_repetitive = sample_amplicon.copy()
+                sample_amplicon_copy_for_repetitive = sample_amplicon_copy_for_repetitive & self.reference_without_repeats   
+                abundance_based_sample_amplicon_stats = sample_amplicon_copy_for_repetitive.get_sample_stats 
+            else:
+                abundance_based_sample_amplicon_stats = sample_amplicon_stats
+            
 
             amplicon_stats.update({
                 "Amplicon unique k-mers": sample_amplicon_stats["num_hashes"],
-                "Amplicon k-mers total abundance": sample_amplicon_stats["total_abundance"],
-                "Amplicon k-mers mean abundance": sample_amplicon_stats["mean_abundance"],
-                "Amplicon k-mers median abundance": sample_amplicon_stats["median_abundance"],
+                "Amplicon k-mers total abundance": abundance_based_sample_amplicon_stats["total_abundance"],
+                "Amplicon k-mers mean abundance": abundance_based_sample_amplicon_stats["mean_abundance"],
+                "Amplicon k-mers median abundance": abundance_based_sample_amplicon_stats["median_abundance"],
                 "Amplicon coverage index": (
                     sample_amplicon_stats["num_hashes"] / len(self.amplicon_sig)
                         if len(self.amplicon_sig) > 0 and sample_amplicon_stats["num_hashes"] is not None else 0
                 ),
             })
+            
+            #! New corrected amplicon coverage and mean abundance
+            if kmers_to_bases > 0:
+                amplicon_stats["corrected amplicon coverage index"] = (
+                    1 - (1 - sample_amplicon_stats["num_hashes"] / len(self.amplicon_sig))**(1/kmers_to_bases)
+                    if len(self.amplicon_sig) > 0 and sample_amplicon_stats["num_hashes"] is not None else 0
+                )
+
+                amplicon_stats["corrected amplicon total abundance"] = (
+                    abundance_based_sample_amplicon_stats["total_abundance"] / kmers_to_bases
+                    if abundance_based_sample_amplicon_stats["total_abundance"] is not None else 0
+                )
+                
+                amplicon_stats["corrected amplicon mean abundance"] = (
+                        amplicon_stats["corrected amplicon total abundance"] /  (amplicon_stats["corrected amplicon coverage index"]* len(self.amplicon_sig))
+                )
 
             # ============= RELATIVE STATS =============
             amplicon_stats["Relative total abundance"] = (
@@ -781,7 +987,17 @@ class MultiSigReferenceQC:
             
 
         # ============= Coverage Prediction (ROI) =============
+        """
+        genome_stats["corrected genomic mean abundance"]
+        genome_stats["corrected genome coverage index"]
+        genome_stats["corrected genomic total abundance"]
+        """
+
         if predict_extra_folds and genome_stats["Genome coverage index"] > 0.01:
+            FRACMINHASH_PRECISION = 1.00
+            if sample_sig.valid_kmers is not None and sample_sig.valid_kmers > 0:
+                FRACMINHASH_PRECISION = (sample_sig.total_abundance * sample_sig.scale) / sample_sig.valid_kmers
+            
             roi_stats = {}
 
             # ------------------------------------------------------------------
@@ -812,7 +1028,8 @@ class MultiSigReferenceQC:
 
             # Cumulative sums across partitions (left-to-right)
             counts_cumulative = counts.cumsum(axis=1)
-            cumulative_total_abundances = counts.sum(axis=0).cumsum()
+            #! NEW Adjust the total abundance for each point
+            cumulative_total_abundances = counts.sum(axis=0).cumsum() / kmers_to_bases
 
             # Arrays to store coverage & unique-kmers for each partition
             coverage_array = np.zeros(nparts, dtype=float)
@@ -829,7 +1046,12 @@ class MultiSigReferenceQC:
                 coverage_val = 0.0
                 if total_reference_kmers > 0:
                     coverage_val = num_unique_kmers / total_reference_kmers
-                coverage_array[i] = coverage_val
+
+                #! NEW: Adjust the coverage for each point
+                coverage_array[i] = 1 - (1 - coverage_val)**(1/kmers_to_bases) if kmers_to_bases is not None else coverage_val
+
+                #! NEW: Adjust the unique kmers for each point
+                unique_kmers_array[i] = int(total_reference_kmers * coverage_array[i])
 
             # We'll define a small helper for the saturation model
             def saturation_model(x, a, b):
@@ -845,7 +1067,26 @@ class MultiSigReferenceQC:
             # 2) Fit the coverage saturation curve
             # ------------------------------------------------------------------
             # Bound a in [0,1], b in [0,∞]
-            initial_guess_coverage = [min(y_coverage_data[-1], 0.99), x_data[len(x_data) // 2]]
+            
+            # Improved initial guess for coverage fit
+            final_coverage = y_coverage_data[-1]  # Last observed coverage
+            max_total_abundance = x_data[-1]  # Total observed abundance
+
+            # Estimate a based on observed trend: if it's increasing slowly, adjust lower
+            a_guess = min(final_coverage * 1.1, 1.0)  # Allow up to 10% increase but cap at 1.0
+
+            # Estimate b using the point where coverage reaches 50% of final coverage
+            try:
+                b_index = np.where(y_coverage_data >= 0.5 * final_coverage)[0][0]  # Find first occurrence
+                b_guess = x_data[b_index]
+            except IndexError:
+                b_guess = max_total_abundance / 2  # Fallback: use half of max abundance
+
+
+            # New initial guess
+            initial_guess_coverage = [a_guess, b_guess]
+            roi_stats["initial_guess_coverage"] = f"{a_guess:.2f}, {b_guess:.2f}"
+
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", OptimizeWarning)
@@ -866,47 +1107,6 @@ class MultiSigReferenceQC:
             roi_stats["Coverage fit param a"] = a_coverage
             roi_stats["Coverage fit param b"] = b_coverage
 
-            # Optionally compute a simple ~95% CI (based on 1.96*std_err)
-            if enable_ci:
-                perr_coverage = np.sqrt(np.diag(cov_coverage))  # standard error
-                ci_coverage = 1.96 * perr_coverage  # approx 95%
-                roi_stats["Coverage fit a (95% CI)"] = [a_coverage - ci_coverage[0], a_coverage + ci_coverage[0]]
-                roi_stats["Coverage fit b (95% CI)"] = [b_coverage - ci_coverage[1], b_coverage + ci_coverage[1]]
-
-            # ------------------------------------------------------------------
-            # 3) Fit the unique k-mers saturation curve
-            # ------------------------------------------------------------------
-            # Bound a in [0, total_reference_kmers], b in [0,∞]
-            initial_guess_unique = [
-                min(y_unique_data[-1], total_reference_kmers * 0.9),
-                x_data[len(x_data) // 2]
-            ]
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("error", OptimizeWarning)
-                    params_unique, cov_unique = curve_fit(
-                        saturation_model,
-                        x_data,
-                        y_unique_data,
-                        p0=initial_guess_unique,
-                        bounds=([0, 0], [float(total_reference_kmers), np.inf]),
-                        maxfev=10000
-                    )
-            except (RuntimeError, OptimizeWarning) as exc:
-                self.logger.warning("Saturation model fit for unique k-mers failed: %s", exc)
-                params_unique = [y_unique_data[-1], 1.0]  # fallback
-                cov_unique = np.zeros((2,2))
-
-            a_unique, b_unique = params_unique
-            roi_stats["Unique fit param a"] = a_unique
-            roi_stats["Unique fit param b"] = b_unique
-
-            # Optionally compute a simple ~95% CI for unique
-            if enable_ci:
-                perr_unique = np.sqrt(np.diag(cov_unique))
-                ci_unique = 1.96 * perr_unique
-                roi_stats["Unique fit a (95% CI)"] = [a_unique - ci_unique[0], a_unique + ci_unique[0]]
-                roi_stats["Unique fit b (95% CI)"] = [b_unique - ci_unique[1], b_unique + ci_unique[1]]
 
             # ------------------------------------------------------------------
             # 4) Predict asymptotes at “full” abundance (corrected or not)
@@ -914,33 +1114,6 @@ class MultiSigReferenceQC:
             # For coverage, saturates at a_coverage in [0..1]
             current_coverage = y_coverage_data[-1]
 
-            # For unique, saturates at a_unique up to total_reference_kmers
-            current_unique = y_unique_data[-1]
-
-            # Optionally we can correct total abundance based on kmer_to_bases_ratio
-            if sample_sig._bases_count and sample_sig._bases_count > 0:
-                kmer_to_bases_ratio = (
-                    sample_stats["k-mer total abundance"] * sample_sig.scale / sample_sig._bases_count
-                )
-                # “corrected_total_abundance” ~ how many more we’d get at “full” depth
-                corrected_total_abundance = (
-                    genome_stats["Genomic k-mers total abundance"] / kmer_to_bases_ratio
-                )
-            else:
-                corrected_total_abundance = x_data[-1]
-
-            # Predicted final unique k-mers
-            predicted_final_unique = saturation_model(corrected_total_abundance, a_unique, b_unique)
-            delta_unique = predicted_final_unique - current_unique
-
-            # Adjusted coverage index
-            predicted_final_coverage = saturation_model(corrected_total_abundance, a_coverage, b_coverage)
-            delta_coverage = predicted_final_coverage - current_coverage
-
-            roi_stats["Predicted genomic unique k-mers"] = predicted_final_unique
-            roi_stats["Delta genomic unique k-mers"] = delta_unique
-            roi_stats["Adjusted genome coverage index"] = predicted_final_coverage
-            roi_stats["Delta genome coverage index"] = delta_coverage
 
             # ------------------------------------------------------------------
             # 5) Predict coverage at extra folds
@@ -949,14 +1122,12 @@ class MultiSigReferenceQC:
             predicted_fold_delta_coverage = {}
 
             # The current total abundance from sample stats
-            current_total_abundance = genome_stats["Genomic k-mers total abundance"]
+            current_total_abundance = genome_stats["corrected genomic total abundance"]
             for extra_fold in predict_extra_folds:
                 # skip invalid folds
                 if extra_fold < 1:
                     continue
 
-                # E.g. if extra_fold=1 => 2x total abundance from current
-                # “(1 + extra_fold)*current_total_abundance”
                 new_total_abundance = (1.0 + extra_fold) * current_total_abundance
                 # coverage model
                 new_pred_coverage = saturation_model(new_total_abundance, a_coverage, b_coverage)
