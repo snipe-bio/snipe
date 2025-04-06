@@ -10,6 +10,7 @@ from snipe.api.enums import SigType
 import os
 from snipe.api.reference_QC import ReferenceQC
 from sklearn.exceptions import ConvergenceWarning
+from scipy.optimize import fsolve
 
 # pylint disable C0301
 
@@ -381,7 +382,6 @@ class MultiSigReferenceQC:
             self.reference_without_repeats = self.reference_sig.copy()
         self.logger.debug(f"Reference without repeats: {len(self.reference_without_repeats)}")
 
-
     def process_sample(self, sample_sig: SnipeSig, predict_extra_folds: Optional[List[int]] = None, advanced: Optional[bool] = False) -> Dict[str, Any]:
 
         # ============= Attributes =============
@@ -447,6 +447,26 @@ class MultiSigReferenceQC:
             ),
         })
 
+        FRACMINHASH_PRECISION = 1.00
+        if sample_sig.valid_kmers is not None and sample_sig.valid_kmers > 0:
+            FRACMINHASH_PRECISION = (sample_sig.total_abundance * sample_sig.scale) / sample_sig.valid_kmers
+                
+        kmer_yield = 1
+        kmers_to_bases = 1
+
+        
+        if sample_sig.bases is not None and sample_sig.bases > 0:
+            kmers_to_bases =  (sample_sig.total_abundance * sample_sig.scale) / sample_sig.bases if sample_sig.bases is not None and sample_sig.total_abundance is not None and sample_sig.total_abundance > 0 else 0    
+            if sample_sig.valid_kmers is not None and sample_sig.valid_kmers > 0:
+                kmer_yield = (sample_sig.valid_kmers / sample_sig.bases)
+        
+        normalized_fracminhash_precision = FRACMINHASH_PRECISION / kmer_yield
+        
+        sample_stats["kmer_yield"]= kmer_yield
+        sample_stats["FRACMINHASH_PRECISION"] = FRACMINHASH_PRECISION
+        sample_stats["NORMALIZED_FRACMINHASH_PRECISION"] = normalized_fracminhash_precision
+        sample_stats["kmers_to_bases"] = kmers_to_bases
+
         # ============= GENOME STATS =============
     
 
@@ -456,22 +476,13 @@ class MultiSigReferenceQC:
         sample_genome = sample_sig & self.reference_sig
 
         sample_genome_stats = sample_genome.get_sample_stats
-        
-        
-        
-        #! New repetitive k-mers awareness
-        abundance_based_sample_genome_stats = sample_genome_stats
-        if self.repetitive_aware_flag:
-            sample_genome_non_repetitive = sample_genome.copy()
-            sample_genome_non_repetitive = sample_genome_non_repetitive & self.reference_without_repeats
-            abundance_based_sample_genome_stats = sample_genome_non_repetitive.get_sample_stats 
-            
 
         genome_stats.update({
             "Genomic unique k-mers": sample_genome_stats["num_hashes"],
-            "Genomic k-mers total abundance": abundance_based_sample_genome_stats["total_abundance"],
-            "Genomic k-mers mean abundance": abundance_based_sample_genome_stats["mean_abundance"],
-            "Genomic k-mers median abundance": abundance_based_sample_genome_stats["median_abundance"],
+            "Genomic k-mers total abundance": sample_genome_stats["total_abundance"],
+            "Genomic k-mers mean abundance": sample_genome_stats["total_abundance"] / len(self.reference_sig),
+            "Genomic k-mers mean abundance - no_zero_cov": sample_genome_stats["mean_abundance"],
+            "Genomic k-mers median abundance - no_zero_cov": sample_genome_stats["median_abundance"],
             "Genome coverage index": (
                 sample_genome_stats["num_hashes"] / len(self.reference_sig)
                 if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
@@ -482,34 +493,113 @@ class MultiSigReferenceQC:
             ),
         })
 
+        if self.repetitive_aware_flag:
+            sample_genome_non_repetitive = sample_genome.copy()
+            sample_genome_non_repetitive = sample_genome_non_repetitive & self.reference_without_repeats
+            abundance_based_sample_genome_stats = sample_genome_non_repetitive.get_sample_stats
 
-        #! New corrected coverage and mean abundance
-        kmer_yield = None
-        kmers_to_bases = 1
-        
-        if sample_sig.bases is not None and sample_sig.bases > 0:
-            kmers_to_bases =  (sample_sig.total_abundance * sample_sig.scale) / sample_sig.bases if sample_sig.bases is not None and sample_sig.total_abundance is not None and sample_sig.total_abundance > 0 else 0    
-            if sample_sig.valid_kmers is not None and sample_sig.valid_kmers > 0:
-                kmer_yield = (sample_sig.valid_kmers / sample_sig.bases)
-        
-        sample_stats["kmer_yield"]= kmer_yield
-        sample_stats["kmers_to_bases"] = kmers_to_bases
+            genome_stats.update({
+            "Genomic repfree k-mers total abundance": abundance_based_sample_genome_stats["total_abundance"],
+            "Genomic repfree k-mers mean abundance - no_zero_cov": abundance_based_sample_genome_stats["mean_abundance"],
+            "Genomic repfree k-mers median abundance - no_zero_cov": abundance_based_sample_genome_stats["median_abundance"],
+        })
+
+
+
+        def bases_covered(L, lambda_, G):
+            return L * (1 - np.exp(-lambda_ * (L / G)))
+            
+        def solve_for_L(L_guess, lambda_, G, N_empirical):
+            return bases_covered(L_guess, lambda_, G) - N_empirical
+
 
         if kmers_to_bases > 0:
-            genome_stats["corrected genome coverage index"] = (
-                1 - (1 - sample_genome_stats["num_hashes"] / len(self.reference_sig))**(1/kmers_to_bases)
+            genome_stats["tmp corrected genome coverage index"] = (
+                1 - (1 - genome_stats["Genome coverage index"])**(1/kmers_to_bases)
                 if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
             )
+
+            genome_stats["razan corrected genome coverage index"] = (
+                1 - (1 - min(genome_stats["Genome coverage index"] * normalized_fracminhash_precision, 1))**(1+_predicted_error_index/kmers_to_bases)
+                if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
+            )
+
+            def grok_calcs(lambda_current, _coverage_index, prefix):
+                local_stats = {}
+                G = len(self.reference_sig)  # Genome size (e.g., 3 billion bases)
+                N_empirical = len(self.reference_sig) * _coverage_index
+                L_initial_guess = N_empirical
+                L_estimated = fsolve(solve_for_L, L_initial_guess, args=(lambda_current, G, N_empirical))[0]
+                local_stats[f"{prefix}grok_L_estimate"] = L_estimated
+                local_stats[f"{prefix}grok_sat_point"] = min(1, L_estimated / len(self.reference_sig)) # maximum possible coverage
+                return local_stats
+
+            # mean1: total abundance / reference size
+            lambda_1_stats = grok_calcs(genome_stats["Genomic k-mers mean abundance"], genome_stats["Genome coverage index"], "raw_")
+            genome_stats.update(lambda_1_stats)
+            lambda_1_stats = grok_calcs(genome_stats["corrected genomic mean abundance"], genome_stats["razan corrected genome coverage index"], "corrected_")
+            genome_stats.update(lambda_1_stats)
+ 
+            # TODO: Delete
+            # #mean2: the mean abundance we know
+            # __mean2_normal_mean = sample_genome.mean_abundance
+            # lambda_2_stats = grok_calcs(__mean2_normal_mean, "mean2_normal_mean_")
+            # genome_stats.update(lambda_2_stats)
+
+            # #mean3: non repetitive mean abundance
+            # __mean3_non_repeats = abundance_based_sample_genome_stats["mean_abundance"]
+            # lambda_3_stats =  grok_calcs(__mean3_non_repeats, "mean3_norepeats_")
+            # genome_stats.update(lambda_3_stats)
+
+            # -----------------------
+            
+            # !TODO: DUPLICATED block down.
+            # Duplicated down there
+            sample_total_abundance = sample_sig.total_abundance
+            sample_nonref = sample_sig - self.reference_sig
+            sample_nonref_singletons = sample_nonref.count_singletons()
+
+            _predicted_error_index = (
+                sample_nonref_singletons / sample_total_abundance
+                if sample_total_abundance is not None and sample_total_abundance > 0 else 0
+            )
+
+            if self.repetitive_aware_flag:
+                genome_stats["corrected repfree genomic total abundance"] = (
+                    (abundance_based_sample_genome_stats["total_abundance"] + abundance_based_sample_genome_stats["total_abundance"] * _predicted_error_index)  / kmers_to_bases
+                    if abundance_based_sample_genome_stats["total_abundance"] is not None else 0
+                )
+
+                genome_stats["corrected repfree genomic mean abundance"] = (
+                    genome_stats["corrected repfree genomic total abundance"] /  len(self.reference_sig)
+                )
+
+                genome_stats["corrected repfree genomic mean abundance - no_zero_cov"] = (
+                    genome_stats["corrected repfree genomic total abundance"] /  (genome_stats["corrected genome coverage index"] * len(self.reference_sig))
+                )
             
             genome_stats["corrected genomic total abundance"] = (
-                abundance_based_sample_genome_stats["total_abundance"] / kmers_to_bases
-                if abundance_based_sample_genome_stats["total_abundance"] is not None else 0
+                (sample_genome_stats["total_abundance"] + sample_genome_stats["total_abundance"] * _predicted_error_index)  / kmers_to_bases
+                if sample_genome_stats["total_abundance"] is not None else 0
             )
             
             genome_stats["corrected genomic mean abundance"] = (
-                genome_stats["corrected genomic total abundance"] /  (genome_stats["corrected genome coverage index"]* len(self.reference_sig))
+                genome_stats["corrected genomic total abundance"] /  len(self.reference_sig)
             )
 
+            genome_stats["corrected genomic mean abundance - no_zero_cov"] = (
+                genome_stats["corrected genomic total abundance"] /  (genome_stats["corrected genome coverage index"] * len(self.reference_sig))
+            )
+            
+            # --------
+
+            genome_stats["corrected_mapping_index"] = (
+                (sample_genome_stats["total_abundance"] + sample_genome_stats["total_abundance"] * _predicted_error_index) / sample_stats["k-mer total abundance"]
+                if sample_stats.get("k-mer total abundance", 0) > 0 and sample_stats["k-mer total abundance"] is not None else 0
+            )
+
+            genome_stats["predicted_error_rate"] = 100 * (_predicted_error_index  / sample_sig.ksize)
+            
         # =============== GMM stats ================
         
         def minimifed_gmm(abundances):
@@ -987,169 +1077,146 @@ class MultiSigReferenceQC:
             
 
         # ============= Coverage Prediction (ROI) =============
-        """
-        genome_stats["corrected genomic mean abundance"]
-        genome_stats["corrected genome coverage index"]
-        genome_stats["corrected genomic total abundance"]
-        """
-
+        
         if predict_extra_folds and genome_stats["Genome coverage index"] > 0.01:
-            FRACMINHASH_PRECISION = 1.00
-            if sample_sig.valid_kmers is not None and sample_sig.valid_kmers > 0:
-                FRACMINHASH_PRECISION = (sample_sig.total_abundance * sample_sig.scale) / sample_sig.valid_kmers
-            
-            roi_stats = {}
+            predicted_fold_coverage = {}
+            predicted_fold_delta_coverage = {}
+            predicted_unique_hashes = {}
+            predicted_delta_unique_hashes = {}
+            nparts = 30
+            roi_reference_sig = self.reference_sig
 
-            # ------------------------------------------------------------------
-            # 1) Partition the sample_genome data once, collecting coverage & unique counts
-            # ------------------------------------------------------------------
-            nparts = 30  # Number of parts to divide the data
-
-            # Extract genome-specific portion of the sample
             _sample_sig_genome = sample_sig & self.reference_sig
+
             hashes = _sample_sig_genome.hashes
             abundances = _sample_sig_genome.abundances
-            N = len(hashes)  # Number of unique k-mers in sample∩genome
+            N = len(hashes)
+
+            fractions = np.random.dirichlet([1] * nparts, size=N)
+            counts = np.round(abundances[:, None] * fractions).astype(int)
+            differences = abundances - counts.sum(axis=1)
+            indices = np.argmax(counts, axis=1)
+            counts[np.arange(N), indices] += differences
+            counts_cumulative = counts.cumsum(axis=1)
+            cumulative_total_abundances = counts.sum(axis=0).cumsum()
+
+            roi_reference_sig.sigtype = SigType.GENOME
+
+            cumulative_coverage_indices = np.zeros(nparts)
+            cumulative_unique_hashes = np.zeros(nparts)
             total_reference_kmers = len(self.reference_sig)
 
-            # Build a list "total_repeats" of each k-mer index repeated by its abundance
-            total_repeats = []
-            for idx, abundance_ in enumerate(abundances):
-                total_repeats.extend([idx] * abundance_)
-
-            # Shuffle for random partitioning
-            np.random.shuffle(total_repeats)
-
-            # We'll track how many times each k-mer index occurs in each partition
-            counts = np.zeros((N, nparts), dtype=int)
-            for j, hash_idx in enumerate(total_repeats):
-                part_index = j % nparts
-                counts[hash_idx, part_index] += 1
-
-            # Cumulative sums across partitions (left-to-right)
-            counts_cumulative = counts.cumsum(axis=1)
-            #! NEW Adjust the total abundance for each point
-            cumulative_total_abundances = counts.sum(axis=0).cumsum() / kmers_to_bases
-
-            # Arrays to store coverage & unique-kmers for each partition
-            coverage_array = np.zeros(nparts, dtype=float)
-            unique_kmers_array = np.zeros(nparts, dtype=float)
-
             for i in range(nparts):
-                # For partition i, how many times each k-mer appears cumulatively
-                cumulative_counts_i = counts_cumulative[:, i]
-                # Unique k-mers is how many are > 0
-                num_unique_kmers = (cumulative_counts_i > 0).sum()
-                unique_kmers_array[i] = num_unique_kmers
+                cumulative_counts = counts_cumulative[:, i]
+                idx = cumulative_counts > 0
+                num_unique_kmers = np.sum(idx)
+                cumulative_unique_hashes[i] = num_unique_kmers
+                coverage_index = num_unique_kmers / total_reference_kmers
+                cumulative_coverage_indices[i] = coverage_index
 
-                # Coverage fraction = (unique k-mers) / (total reference k-mers)
-                coverage_val = 0.0
-                if total_reference_kmers > 0:
-                    coverage_val = num_unique_kmers / total_reference_kmers
+            coverage_depth_data = []
+            for i in range(nparts):
+                coverage_depth_data.append({
+                    "cumulative_parts": i + 1,
+                    "cumulative_total_abundance": cumulative_total_abundances[i],
+                    "cumulative_coverage_index": cumulative_coverage_indices[i],
+                    "cumulative_unique_hashes": cumulative_unique_hashes[i]
+                })
 
-                #! NEW: Adjust the coverage for each point
-                coverage_array[i] = 1 - (1 - coverage_val)**(1/kmers_to_bases) if kmers_to_bases is not None else coverage_val
-
-                #! NEW: Adjust the unique kmers for each point
-                unique_kmers_array[i] = int(total_reference_kmers * coverage_array[i])
-
-            # We'll define a small helper for the saturation model
             def saturation_model(x, a, b):
-                # Michaelis–Menten style
-                return (a * x) / (b + x)
+                return a * x / (b + x)
 
-            # Pull out x-coords (cumulative abundance), y1=coverage, y2=unique
-            x_data = cumulative_total_abundances
-            y_coverage_data = coverage_array
-            y_unique_data = unique_kmers_array
-
-            # ------------------------------------------------------------------
-            # 2) Fit the coverage saturation curve
-            # ------------------------------------------------------------------
-            # Bound a in [0,1], b in [0,∞]
-            
-            # Improved initial guess for coverage fit
-            final_coverage = y_coverage_data[-1]  # Last observed coverage
-            max_total_abundance = x_data[-1]  # Total observed abundance
-
-            # Estimate a based on observed trend: if it's increasing slowly, adjust lower
-            a_guess = min(final_coverage * 1.1, 1.0)  # Allow up to 10% increase but cap at 1.0
-
-            # Estimate b using the point where coverage reaches 50% of final coverage
-            try:
-                b_index = np.where(y_coverage_data >= 0.5 * final_coverage)[0][0]  # Find first occurrence
-                b_guess = x_data[b_index]
-            except IndexError:
-                b_guess = max_total_abundance / 2  # Fallback: use half of max abundance
-
-
-            # New initial guess
-            initial_guess_coverage = [a_guess, b_guess]
-            roi_stats["initial_guess_coverage"] = f"{a_guess:.2f}, {b_guess:.2f}"
+            x_unique = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
+            y_unique = np.array([d["cumulative_unique_hashes"] for d in coverage_depth_data])
+            y_unique = np.maximum.accumulate(y_unique)
+            initial_guess_unique = [y_unique[-1], x_unique[int(len(x_unique) / 2)]]
 
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", OptimizeWarning)
-                    params_coverage, cov_coverage = curve_fit(
+                    params_unique, covariance_unique = curve_fit(
                         saturation_model,
-                        x_data,
-                        y_coverage_data,
-                        p0=initial_guess_coverage,
-                        bounds=([0, 0], [1.0, np.inf]),
+                        x_unique,
+                        y_unique,
+                        p0=initial_guess_unique,
+                        bounds=(0, np.inf),
                         maxfev=10000
                     )
             except (RuntimeError, OptimizeWarning) as exc:
-                self.logger.warning("Saturation model fit for coverage failed: %s", exc)
-                params_coverage = [y_coverage_data[-1], 1.0]  # fallback
-                cov_coverage = np.zeros((2,2))
+                raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.") from exc
+
+            if np.isinf(covariance_unique).any() or np.isnan(covariance_unique).any():
+                raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.")
+
+            a_unique, b_unique = params_unique
+            # make sure not non and not zero
+            if sample_sig._bases_count > 0 and sample_sig._bases_count is not None:
+                corrected_total_abundance = sample_sig._bases_count / sample_sig.scale
+            else:
+                self.logger.warning("Total bases count is zero or None. This will affect the calculation of adjsuted coverage index and k-mer-to-bases ratio.")
+                corrected_total_abundance = x_unique[-1]
+            predicted_genomic_unique_hashes = saturation_model(corrected_total_abundance, a_unique, b_unique)
+            current_unique_hashes = y_unique[-1]
+            predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes)
+            delta_unique_hashes = predicted_genomic_unique_hashes - current_unique_hashes
+            adjusted_genome_coverage_index = predicted_genomic_unique_hashes / total_reference_kmers if total_reference_kmers > 0 else 0.0
+
+            predicted_unique_hashes = {
+                "Predicted genomic unique k-mers": predicted_genomic_unique_hashes,
+                "Delta genomic unique k-mers": delta_unique_hashes,
+                "Adjusted genome coverage index": adjusted_genome_coverage_index
+            }
+
+            x_total_abundance = x_unique
+            y_coverage = cumulative_coverage_indices
+            initial_guess_coverage = [y_coverage[-1], x_total_abundance[int(len(x_total_abundance) / 2)]]
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", OptimizeWarning)
+                    params_coverage, covariance_coverage = curve_fit(
+                        saturation_model,
+                        x_total_abundance,
+                        y_coverage,
+                        p0=initial_guess_coverage,
+                        bounds=(0, np.inf),
+                        maxfev=10000
+                    )
+            except (RuntimeError, OptimizeWarning) as exc:
+                raise RuntimeError("Saturation model fitting for coverage failed.") from exc
+
+            if np.isinf(covariance_coverage).any() or np.isnan(covariance_coverage).any():
+                raise RuntimeError("Saturation model fitting for coverage failed.")
 
             a_coverage, b_coverage = params_coverage
-            roi_stats["Coverage fit param a"] = a_coverage
-            roi_stats["Coverage fit param b"] = b_coverage
 
-
-            # ------------------------------------------------------------------
-            # 4) Predict asymptotes at “full” abundance (corrected or not)
-            # ------------------------------------------------------------------
-            # For coverage, saturates at a_coverage in [0..1]
-            current_coverage = y_coverage_data[-1]
-
-
-            # ------------------------------------------------------------------
-            # 5) Predict coverage at extra folds
-            # ------------------------------------------------------------------
-            predicted_fold_coverage = {}
-            predicted_fold_delta_coverage = {}
-
-            # The current total abundance from sample stats
-            current_total_abundance = genome_stats["corrected genomic total abundance"]
             for extra_fold in predict_extra_folds:
-                # skip invalid folds
                 if extra_fold < 1:
                     continue
+                
+                #! BETA: Predict the coverage based on the adjusted total abundance
+                # total_abundance = x_total_abundance[-1]
+                predicted_total_abundance = (1 + extra_fold) * corrected_total_abundance # x_total_abundance[-1]
+                predicted_coverage = saturation_model(predicted_total_abundance, a_coverage, b_coverage)
+                max_coverage = 1.0
+                predicted_coverage = min(predicted_coverage, max_coverage)
+                predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
+                _delta_coverage = predicted_coverage - y_coverage[-1]
+                predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
 
-                new_total_abundance = (1.0 + extra_fold) * current_total_abundance
-                # coverage model
-                new_pred_coverage = saturation_model(new_total_abundance, a_coverage, b_coverage)
-                new_delta = new_pred_coverage - current_coverage
-
-                predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = new_pred_coverage
-                predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = new_delta
-
-                if new_delta < 0:
+                if _delta_coverage < 0:
                     self.logger.warning(
-                        "Predicted coverage at %.2f-fold is less than current coverage, which may indicate a model fit issue.",
+                        "Predicted coverage at %.2f-fold increase is less than the current coverage.",
                         extra_fold
                     )
 
             roi_stats.update(predicted_fold_coverage)
             roi_stats.update(predicted_fold_delta_coverage)
+            roi_stats.update(predicted_unique_hashes)
 
         else:
-            self.logger.warning("Skipping ROI prediction due to insufficient coverage or no extra folds.")
+            self.logger.warning("Skipping ROI prediction due to zero Genomic Coverage Index.")
 
-
-                
         # ============= Merging all stats in one dictionary =============
         aggregated_stats = {}
         if sample_stats:
