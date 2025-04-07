@@ -512,6 +512,16 @@ class MultiSigReferenceQC:
         def solve_for_L(L_guess, lambda_, G, N_empirical):
             return bases_covered(L_guess, lambda_, G) - N_empirical
 
+        # !TODO: DUPLICATED block down.
+        # Duplicated down there
+        sample_total_abundance = sample_sig.total_abundance
+        sample_nonref = sample_sig - self.reference_sig
+        sample_nonref_singletons = sample_nonref.count_singletons()
+
+        _predicted_error_index = (
+            sample_nonref_singletons / sample_total_abundance
+            if sample_total_abundance is not None and sample_total_abundance > 0 else 0
+        )
 
         if kmers_to_bases > 0:
             genome_stats["tmp corrected genome coverage index"] = (
@@ -537,9 +547,7 @@ class MultiSigReferenceQC:
             # mean1: total abundance / reference size
             lambda_1_stats = grok_calcs(genome_stats["Genomic k-mers mean abundance"], genome_stats["Genome coverage index"], "raw_")
             genome_stats.update(lambda_1_stats)
-            lambda_1_stats = grok_calcs(genome_stats["corrected genomic mean abundance"], genome_stats["razan corrected genome coverage index"], "corrected_")
-            genome_stats.update(lambda_1_stats)
- 
+            
             # TODO: Delete
             # #mean2: the mean abundance we know
             # __mean2_normal_mean = sample_genome.mean_abundance
@@ -553,16 +561,6 @@ class MultiSigReferenceQC:
 
             # -----------------------
             
-            # !TODO: DUPLICATED block down.
-            # Duplicated down there
-            sample_total_abundance = sample_sig.total_abundance
-            sample_nonref = sample_sig - self.reference_sig
-            sample_nonref_singletons = sample_nonref.count_singletons()
-
-            _predicted_error_index = (
-                sample_nonref_singletons / sample_total_abundance
-                if sample_total_abundance is not None and sample_total_abundance > 0 else 0
-            )
 
             if self.repetitive_aware_flag:
                 genome_stats["corrected repfree genomic total abundance"] = (
@@ -575,7 +573,7 @@ class MultiSigReferenceQC:
                 )
 
                 genome_stats["corrected repfree genomic mean abundance - no_zero_cov"] = (
-                    genome_stats["corrected repfree genomic total abundance"] /  (genome_stats["corrected genome coverage index"] * len(self.reference_sig))
+                    genome_stats["corrected repfree genomic total abundance"] /  (genome_stats["razan corrected genome coverage index"] * len(self.reference_sig))
                 )
             
             genome_stats["corrected genomic total abundance"] = (
@@ -588,8 +586,12 @@ class MultiSigReferenceQC:
             )
 
             genome_stats["corrected genomic mean abundance - no_zero_cov"] = (
-                genome_stats["corrected genomic total abundance"] /  (genome_stats["corrected genome coverage index"] * len(self.reference_sig))
+                genome_stats["corrected genomic total abundance"] /  (genome_stats["razan corrected genome coverage index"] * len(self.reference_sig))
             )
+            
+            lambda_1_stats = grok_calcs(genome_stats["corrected genomic mean abundance"], genome_stats["razan corrected genome coverage index"], "corrected_")
+            genome_stats.update(lambda_1_stats)
+ 
             
             # --------
 
