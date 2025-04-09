@@ -572,8 +572,12 @@ class MultiSigReferenceQC:
                     genome_stats["corrected repfree genomic total abundance"] /  len(self.reference_sig)
                 )
 
-                genome_stats["corrected repfree genomic mean abundance - no_zero_cov"] = (
-                    genome_stats["corrected repfree genomic total abundance"] /  (genome_stats["razan corrected genome coverage index"] * len(self.reference_sig))
+                denominator = genome_stats["razan corrected genome coverage index"] * len(self.reference_sig)
+                genome_stats["corrected repfree genomic mean abundance - no_zero_cov"] = np.divide(
+                    genome_stats["corrected repfree genomic total abundance"],
+                    denominator,
+                    out=np.zeros_like(genome_stats["corrected repfree genomic total abundance"]),
+                    where=denominator != 0
                 )
             
             genome_stats["corrected genomic total abundance"] = (
@@ -585,9 +589,14 @@ class MultiSigReferenceQC:
                 genome_stats["corrected genomic total abundance"] /  len(self.reference_sig)
             )
 
-            genome_stats["corrected genomic mean abundance - no_zero_cov"] = (
-                genome_stats["corrected genomic total abundance"] /  (genome_stats["razan corrected genome coverage index"] * len(self.reference_sig))
-            )
+            denominator = genome_stats["razan corrected genome coverage index"] * len(self.reference_sig)
+            if denominator == 0:
+                genome_stats["corrected genomic mean abundance - no_zero_cov"] = 0
+            else:
+                genome_stats["corrected genomic mean abundance - no_zero_cov"] = (
+                    genome_stats["corrected genomic total abundance"] / denominator
+                )
+
             
             lambda_1_stats = grok_calcs(genome_stats["corrected genomic mean abundance"], genome_stats["razan corrected genome coverage index"], "corrected_")
             genome_stats.update(lambda_1_stats)
