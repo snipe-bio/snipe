@@ -525,12 +525,12 @@ class MultiSigReferenceQC:
 
         if kmers_to_bases > 0:
             genome_stats["tmp corrected genome coverage index"] = (
-                1 - (1 - genome_stats["Genome coverage index"])**(1/kmers_to_bases)
+                1 - (1 - genome_stats["Genome coverage index"])**((1+_predicted_error_index)/kmers_to_bases)
                 if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
             )
 
             genome_stats["razan corrected genome coverage index"] = (
-                1 - (1 - min(genome_stats["Genome coverage index"] * normalized_fracminhash_precision, 1))**(1+_predicted_error_index/kmers_to_bases)
+                1 - (1 - min(genome_stats["Genome coverage index"] * normalized_fracminhash_precision, 1))**((1+_predicted_error_index)/kmers_to_bases)
                 if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
             )
 
@@ -753,8 +753,10 @@ class MultiSigReferenceQC:
                     if abundance_based_sample_amplicon_stats["total_abundance"] is not None else 0
                 )
                 
+                amplicon_denominator = amplicon_stats["corrected amplicon coverage index"] * len(self.amplicon_sig)
                 amplicon_stats["corrected amplicon mean abundance"] = (
-                        amplicon_stats["corrected amplicon total abundance"] /  (amplicon_stats["corrected amplicon coverage index"]* len(self.amplicon_sig))
+                    amplicon_stats["corrected amplicon total abundance"] / amplicon_denominator
+                    if amplicon_denominator > 0 else 0
                 )
 
             # ============= RELATIVE STATS =============
