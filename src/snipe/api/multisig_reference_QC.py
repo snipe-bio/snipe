@@ -680,7 +680,8 @@ class MultiSigReferenceQC:
                     self.logger.error("[!] More than 20%% of the amplicon signature is not contained in the reference genome.")
                     raise ValueError("Amplicon signature is poorly contained in the reference genome.")
                 self.logger.debug(
-                    "Amplicon signature is not fully contained in the reference genome.\nRemoving %d hashes (%.2f%%) from the amplicon signature.",
+                    "Amplicon signature is not fully contained in the reference genome.\n"
+                    "Removing %d hashes (%.2f%%) from the amplicon signature.",
                     len(_sig_to_be_removed), _percentage_of_removal
                 )
                 self.amplicon_sig.difference_sigs(_sig_to_be_removed)
@@ -689,10 +690,19 @@ class MultiSigReferenceQC:
             self.logger.debug("Calculating amplicon statistics.")
             sample_amplicon = sample_sig & self.amplicon_sig
             sample_amplicon_stats = sample_amplicon.get_sample_stats
+
+            # NEW: Repetitive-free amplicon metrics
             if self.repetitive_aware_flag:
                 sample_amplicon_copy = sample_amplicon.copy()
                 sample_amplicon_copy &= self.reference_without_repeats
                 abundance_based_sample_amplicon_stats = sample_amplicon_copy.get_sample_stats
+
+                amplicon_stats["Amplicon repfree k-mers total abundance"] = \
+                    abundance_based_sample_amplicon_stats["total_abundance"]
+                amplicon_stats["Amplicon repfree k-mers mean abundance - no_zero_cov"] = \
+                    abundance_based_sample_amplicon_stats["mean_abundance"]
+                amplicon_stats["Amplicon repfree k-mers median abundance - no_zero_cov"] = \
+                    abundance_based_sample_amplicon_stats["median_abundance"]
             else:
                 abundance_based_sample_amplicon_stats = sample_amplicon_stats
 
@@ -707,28 +717,95 @@ class MultiSigReferenceQC:
                 ),
             })
 
+            # NEW: multiple corrected coverage indices for amplicons (similar to genome’s tmp & razan coverage)
             if kmers_to_bases > 0:
-                amplicon_stats["corrected amplicon coverage index"] = (
-                    1 - (1 - sample_amplicon_stats["num_hashes"] / len(self.amplicon_sig)) ** (1 / kmers_to_bases)
-                    if len(self.amplicon_sig) > 0 and sample_amplicon_stats["num_hashes"] is not None else 0
+                # tmp corrected coverage index
+                amplicon_stats["tmp corrected amplicon coverage index"] = (
+                    1 - (1 - amplicon_stats["Amplicon coverage index"]) ** 
+                    ((1 + _predicted_error_index) / kmers_to_bases)
+                    if amplicon_stats["Amplicon coverage index"] > 0 else 0
                 )
+
+                # razan corrected coverage index
+                # (using 'normalized_fracminhash_precision' to parallel the genome logic)
+                min_cov = amplicon_stats["Amplicon coverage index"] * normalized_fracminhash_precision
+                amplicon_stats["razan corrected amplicon coverage index"] = (
+                    1 - (1 - min(min_cov, 1.0)) ** ((1 + _predicted_error_index) / kmers_to_bases)
+                    if amplicon_stats["Amplicon coverage index"] > 0 else 0
+                )
+
+                # corrected total abundance
                 amplicon_stats["corrected amplicon total abundance"] = (
-                    abundance_based_sample_amplicon_stats["total_abundance"] / kmers_to_bases
+                    (abundance_based_sample_amplicon_stats["total_abundance"] +
+                    abundance_based_sample_amplicon_stats["total_abundance"] * _predicted_error_index)
+                    / kmers_to_bases
                     if abundance_based_sample_amplicon_stats["total_abundance"] is not None else 0
                 )
-                amplicon_denominator = amplicon_stats["corrected amplicon coverage index"] * len(self.amplicon_sig)
+
+                # corrected mean abundance (overall)
                 amplicon_stats["corrected amplicon mean abundance"] = (
-                    amplicon_stats["corrected amplicon total abundance"] / amplicon_denominator
-                    if amplicon_denominator > 0 else 0
+                    amplicon_stats["corrected amplicon total abundance"] / len(self.amplicon_sig)
+                    if len(self.amplicon_sig) > 0 else 0
                 )
+
+                # corrected mean abundance - no_zero_cov
+                amplicon_denominator = amplicon_stats["razan corrected amplicon coverage index"] * len(self.amplicon_sig)
+                if amplicon_denominator == 0:
+                    amplicon_stats["corrected amplicon mean abundance - no_zero_cov"] = 0
+                else:
+                    amplicon_stats["corrected amplicon mean abundance - no_zero_cov"] = \
+                        amplicon_stats["corrected amplicon total abundance"] / amplicon_denominator
+
+                # corrected mapping index for amplicons
+                amplicon_stats["corrected amplicon mapping index"] = (
+                    (sample_amplicon_stats["total_abundance"] + sample_amplicon_stats["total_abundance"] * _predicted_error_index)
+                    / sample_stats["k-mer total abundance"]
+                    if (sample_stats.get("k-mer total abundance", 0) > 0
+                        and sample_amplicon_stats["total_abundance"] is not None) else 0
+                )
+
+                # predicted sequencing error rate (amplicon version)
+                # Typically the error rate applies to the entire sample, but if you need
+                # an amplicon-specific stat, you can reuse the same formula:
+                amplicon_stats["amplicon predicted error rate"] = 100 * (_predicted_error_index / sample_sig.ksize)
+
+                # NEW: saturation model (“grok”) for amplicons
+                # raw
+                lambda_amplicon_raw = amplicon_stats["Amplicon k-mers mean abundance"]
+                cov_amplicon_raw = amplicon_stats["Amplicon coverage index"]
+                amplicon_len = len(self.amplicon_sig)
+
+                lambda_amplicon_raw_stats = self._grok_calcs(
+                    lambda_amplicon_raw,
+                    cov_amplicon_raw,
+                    "raw_amplicon_",
+                    amplicon_len
+                )
+                amplicon_stats.update(lambda_amplicon_raw_stats)
+
+                # corrected
+                corrected_amplicon_lambda = amplicon_stats["corrected amplicon mean abundance"]
+                corrected_amplicon_cov_index = amplicon_stats["razan corrected amplicon coverage index"]
+                lambda_amplicon_stats_corr = self._grok_calcs(
+                    corrected_amplicon_lambda,
+                    corrected_amplicon_cov_index,
+                    "corrected_amplicon_",
+                    amplicon_len
+                )
+                amplicon_stats.update(lambda_amplicon_stats_corr)
+
+            # Maintain the old relative stats as-is
             amplicon_stats["Relative total abundance"] = (
                 amplicon_stats["Amplicon k-mers total abundance"] / genome_stats["Genomic k-mers total abundance"]
-                if genome_stats.get("Genomic k-mers total abundance", 0) > 0 and amplicon_stats.get("Amplicon k-mers total abundance") is not None else 0
+                if genome_stats.get("Genomic k-mers total abundance", 0) > 0 and
+                amplicon_stats.get("Amplicon k-mers total abundance") is not None else 0
             )
             amplicon_stats["Relative coverage"] = (
                 amplicon_stats["Amplicon coverage index"] / genome_stats["Genome coverage index"]
-                if genome_stats.get("Genome coverage index", 0) > 0 and amplicon_stats.get("Amplicon coverage index") is not None else 0
+                if genome_stats.get("Genome coverage index", 0) > 0 and
+                amplicon_stats.get("Amplicon coverage index") is not None else 0
             )
+
         else:
             self.logger.debug("No amplicon signature provided.")
 
