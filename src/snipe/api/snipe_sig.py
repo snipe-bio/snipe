@@ -671,7 +671,7 @@ class SnipeSig:
 
         if common_hashes.size == 0:
             self.logger.debug("No common hashes found. Returning an empty signature.")
-            return self.create_from_hashes_abundances(
+            result = self.create_from_hashes_abundances(
                 hashes=np.array([], dtype=np.uint64),
                 abundances=np.array([], dtype=np.uint32),
                 ksize=self._ksize,
@@ -680,6 +680,9 @@ class SnipeSig:
                 filename=None,
                 enable_logging=self.logger.level <= logging.DEBUG
             )
+            result.bases = self.bases
+            result.valid_kmers = self.valid_kmers
+            return result
 
         # Get the abundances from self
         common_abundances = self._abundances[self_indices]
@@ -970,7 +973,8 @@ class SnipeSig:
     @classmethod
     def create_from_hashes_abundances(cls, hashes: np.ndarray, abundances: np.ndarray,
                                       ksize: int, scale: int, name: str = None,
-                                      filename: str = None, enable_logging: bool = False, sig_type: SigType = SigType.SAMPLE) -> 'SnipeSig':
+                                      filename: str = None, enable_logging: bool = False, 
+                                      sig_type: SigType = SigType.SAMPLE) -> 'SnipeSig':
         """
         Internal method to create a SnipeSig instance from hashes and abundances.
 
