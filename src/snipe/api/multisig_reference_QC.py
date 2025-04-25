@@ -89,7 +89,11 @@ class MultiSigReferenceQC:
 
         # -------------- Validate and Store Signatures --------------
         self.reference_sig = reference_sig
+        self.REFERENCE_UNIQUE_KMERS = len(reference_sig)
+        self.REFERENCE_TOTAL_KMERS = reference_sig.total_abundance        
         self.amplicon_sig = amplicon_sig
+        self.AMPLICON_UNIQUE_KMERS = len(amplicon_sig) if amplicon_sig else 0
+        self.AMPLICON_TOTAL_KMERS = amplicon_sig.total_abundance if amplicon_sig else 0
         self._validate_signatures(reference_sig, amplicon_sig, ychr)
 
         # -------------- Prepare Chromosome-Specific Signatures --------------
@@ -313,6 +317,8 @@ class MultiSigReferenceQC:
         return {k: chrom_dict[k] for k in sorted_keys}
 
     def _predict_roi_stats(self, sample_sig, kmers_to_bases: float, predict_extra_folds: List[int]) -> Dict[str, Any]:
+        #! TODO: Consider the repfree version in the ROI.
+        
         """
         Predict coverage (ROI) statistics.
         A constant seed is set here to reproduce results exactly.
@@ -352,7 +358,7 @@ class MultiSigReferenceQC:
             idx = cumulative_counts > 0
             num_unique_kmers = np.sum(idx)
             cumulative_unique_hashes[i] = num_unique_kmers
-            cumulative_coverage_indices[i] = num_unique_kmers / total_reference_kmers
+            cumulative_coverage_indices[i] = num_unique_kmers / self.REFERENCE_UNIQUE_KMERS if self.REFERENCE_UNIQUE_KMERS > 0 else 0
 
         coverage_depth_data = []
         for i in range(nparts):
@@ -536,11 +542,6 @@ class MultiSigReferenceQC:
             "singleton k-mers": sample_stats_raw["num_singletons"],
             "snipe bases": sample_stats_raw["snipe_bases"],
             "snipe valid k-mers": sample_sig.valid_kmers,
-            "k-mer-to-bases ratio": (
-                (sample_stats_raw["total_abundance"] * sample_stats_raw["scale"])
-                / sample_stats_raw["snipe_bases"]
-                if sample_stats_raw["snipe_bases"] > 0 else 0
-            ),
         })
 
         FRACMINHASH_PRECISION = 1.00
@@ -568,11 +569,11 @@ class MultiSigReferenceQC:
         genome_stats.update({
             "Genomic unique k-mers": sample_genome_stats["num_hashes"],
             "Genomic k-mers total abundance": sample_genome_stats["total_abundance"],
-            "Genomic k-mers mean abundance": sample_genome_stats["total_abundance"] / len(self.reference_sig),
+            "Genomic k-mers mean abundance": sample_genome_stats["total_abundance"] / self.REFERENCE_TOTAL_KMERS,
             "Genomic k-mers mean abundance - no_zero_cov": sample_genome_stats["mean_abundance"],
             "Genomic k-mers median abundance - no_zero_cov": sample_genome_stats["median_abundance"],
-            "Genome coverage index": (sample_genome_stats["num_hashes"] / len(self.reference_sig)
-                                      if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0),
+            "Genome coverage index": (sample_genome_stats["num_hashes"] / self.REFERENCE_UNIQUE_KMERS
+                                      if self.REFERENCE_UNIQUE_KMERS > 0 and sample_genome_stats["num_hashes"] is not None else 0),
             "Mapping index": (sample_genome_stats["total_abundance"] / sample_stats["k-mer total abundance"]
                               if sample_stats.get("k-mer total abundance", 0) > 0 and sample_genome_stats["total_abundance"] is not None else 0),
         })
@@ -582,9 +583,12 @@ class MultiSigReferenceQC:
             sample_genome_non_repetitive &= self.reference_without_repeats
             abundance_based_sample_genome_stats = sample_genome_non_repetitive.get_sample_stats
             genome_stats.update({
+                "Genomic repfree unique k-mers": abundance_based_sample_genome_stats["num_hashes"],
                 "Genomic repfree k-mers total abundance": abundance_based_sample_genome_stats["total_abundance"],
                 "Genomic repfree k-mers mean abundance - no_zero_cov": abundance_based_sample_genome_stats["mean_abundance"],
                 "Genomic repfree k-mers median abundance - no_zero_cov": abundance_based_sample_genome_stats["median_abundance"],
+                "Genomic repfree k-mers coverage index": (abundance_based_sample_genome_stats["num_hashes"] / len(self.reference_without_repeats)
+                                                          if len(self.reference_without_repeats) > 0 and abundance_based_sample_genome_stats["num_hashes"] is not None else 0),
             })
         else:
             abundance_based_sample_genome_stats = sample_genome_stats
@@ -592,54 +596,37 @@ class MultiSigReferenceQC:
         sample_total_abundance = sample_sig.total_abundance
         sample_nonref = sample_sig - self.reference_sig
         sample_nonref_singletons = sample_nonref.count_singletons()
-        _predicted_error_index = (sample_nonref_singletons / sample_total_abundance
+        predicted_error_index = (sample_nonref_singletons / sample_total_abundance
                                   if sample_total_abundance is not None and sample_total_abundance > 0 else 0)
 
         _genetic_var = 0.1
 
-        if kmers_to_bases > 0:
+        if kmers_to_bases > 0 and sample_genome_stats["num_hashes"] is not None:
             genome_stats["tmp corrected genome coverage index"] = (
-                1 - (1 - genome_stats["Genome coverage index"]) ** ((1 + _predicted_error_index + _genetic_var) / kmer_yield)
-                if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
+                1 - (1 - genome_stats["Genome coverage index"]) ** ((1 + predicted_error_index + _genetic_var) / kmer_yield)
             )
             genome_stats["razan corrected genome coverage index"] = (
-                1 - (1 - min(genome_stats["Genome coverage index"] * normalized_fracminhash_precision, 1)) ** ((1 + _predicted_error_index + _genetic_var) / kmers_to_bases)
-                if len(self.reference_sig) > 0 and sample_genome_stats["num_hashes"] is not None else 0
+                1 - (1 - min(genome_stats["Genome coverage index"] * normalized_fracminhash_precision, 1)) ** ((1 + predicted_error_index + _genetic_var) / kmers_to_bases)
             )
+                        
             lambda_1_stats = self._grok_calcs(
                 genome_stats["Genomic k-mers mean abundance"],
                 genome_stats["Genome coverage index"],
                 "raw_",
-                len(self.reference_sig)
+                self.REFERENCE_UNIQUE_KMERS
             )
             genome_stats.update(lambda_1_stats)
 
-            if self.repetitive_aware_flag:
-                genome_stats["corrected repfree genomic total abundance"] = (
-                    (abundance_based_sample_genome_stats["total_abundance"] +
-                     abundance_based_sample_genome_stats["total_abundance"] * _predicted_error_index +
-                     abundance_based_sample_genome_stats["total_abundance"] * _genetic_var) / kmers_to_bases
-                    if abundance_based_sample_genome_stats["total_abundance"] is not None else 0
-                )
-                genome_stats["corrected repfree genomic mean abundance"] = (
-                    genome_stats["corrected repfree genomic total abundance"] / len(self.reference_sig)
-                )
-                denominator = genome_stats["razan corrected genome coverage index"] * len(self.reference_sig)
-                genome_stats["corrected repfree genomic mean abundance - no_zero_cov"] = np.divide(
-                    genome_stats["corrected repfree genomic total abundance"],
-                    denominator,
-                    out=np.zeros_like(genome_stats["corrected repfree genomic total abundance"]),
-                    where=denominator != 0
-                )
+
             genome_stats["corrected genomic total abundance"] = (
-                (sample_genome_stats["total_abundance"] + sample_genome_stats["total_abundance"] * _predicted_error_index + sample_genome_stats["total_abundance"] * _genetic_var)
+                (sample_genome_stats["total_abundance"] + sample_genome_stats["total_abundance"] * predicted_error_index + sample_genome_stats["total_abundance"] * _genetic_var)
                 / kmers_to_bases
                 if sample_genome_stats["total_abundance"] is not None else 0
             )
             genome_stats["corrected genomic mean abundance"] = (
-                genome_stats["corrected genomic total abundance"] / len(self.reference_sig)
+                genome_stats["corrected genomic total abundance"] / self.REFERENCE_TOTAL_KMERS
             )
-            denominator = genome_stats["razan corrected genome coverage index"] * len(self.reference_sig)
+            denominator = genome_stats["razan corrected genome coverage index"] * self.REFERENCE_UNIQUE_KMERS
             if denominator == 0:
                 genome_stats["corrected genomic mean abundance - no_zero_cov"] = 0
             else:
@@ -652,15 +639,41 @@ class MultiSigReferenceQC:
                 corrected_lambda,
                 corrected_cov_index,
                 "corrected_",
-                len(self.reference_sig)
+                self.REFERENCE_UNIQUE_KMERS
             )
             genome_stats.update(lambda_1_stats_corr)
             genome_stats["corrected_mapping_index"] = (
-                (sample_genome_stats["total_abundance"] + sample_genome_stats["total_abundance"] * _predicted_error_index + sample_genome_stats["total_abundance"] * _genetic_var)
+                (sample_genome_stats["total_abundance"] + sample_genome_stats["total_abundance"] * predicted_error_index + sample_genome_stats["total_abundance"] * _genetic_var)
                 / sample_stats["k-mer total abundance"]
                 if sample_stats.get("k-mer total abundance", 0) > 0 and sample_stats["k-mer total abundance"] is not None else 0
             )
-            genome_stats["predicted_error_rate"] = 100 * (_predicted_error_index / sample_sig.ksize)
+            genome_stats["predicted_base_error_percentage"] = 100 * (predicted_error_index / sample_sig.ksize)
+            
+            
+            if self.repetitive_aware_flag:
+                genome_stats["tmp corrected genome repfree coverage index"] = (
+                    1 - (1 - genome_stats["Genomic repfree k-mers coverage index"]) ** ((1 + predicted_error_index + _genetic_var) / kmer_yield)
+                )
+                genome_stats["razan corrected genome repfree coverage index"] = (
+                    1 - (1 - min(genome_stats["Genomic repfree k-mers coverage index"] * normalized_fracminhash_precision, 1)) ** ((1 + predicted_error_index + _genetic_var) / kmers_to_bases)
+                )
+    
+                genome_stats["corrected repfree genomic total abundance"] = (
+                    (abundance_based_sample_genome_stats["total_abundance"] +
+                     abundance_based_sample_genome_stats["total_abundance"] * predicted_error_index +
+                     abundance_based_sample_genome_stats["total_abundance"] * _genetic_var) / kmers_to_bases
+                    if abundance_based_sample_genome_stats["total_abundance"] is not None else 0
+                )
+                genome_stats["corrected repfree genomic mean abundance"] = (
+                    genome_stats["corrected repfree genomic total abundance"] / len(self.reference_without_repeats)
+                )
+                denominator = genome_stats["razan corrected genome repfree coverage index"] * len(self.reference_without_repeats)
+                genome_stats["corrected repfree genomic mean abundance - no_zero_cov"] = np.divide(
+                    genome_stats["corrected repfree genomic total abundance"],
+                    denominator,
+                    out=np.zeros_like(genome_stats["corrected repfree genomic total abundance"]),
+                    where=denominator != 0
+                )
 
         (genome_stats["genomic_dprime"],
          genome_stats["genomic_overlap"],
@@ -696,9 +709,10 @@ class MultiSigReferenceQC:
 
             # NEW: Repetitive-free amplicon metrics
             if self.repetitive_aware_flag:
-                sample_amplicon_copy = sample_amplicon.copy()
-                sample_amplicon_copy &= self.reference_without_repeats
-                abundance_based_sample_amplicon_stats = sample_amplicon_copy.get_sample_stats
+                sample_amplicon_non_repetitive = sample_amplicon.copy()
+                sample_amplicon_non_repetitive &= self.reference_without_repeats
+                self.amplicon_without_repeats = self.amplicon_sig & self.reference_without_repeats
+                abundance_based_sample_amplicon_stats = sample_amplicon_non_repetitive.get_sample_stats
 
                 amplicon_stats["Amplicon repfree k-mers total abundance"] = \
                     abundance_based_sample_amplicon_stats["total_abundance"]
@@ -706,6 +720,12 @@ class MultiSigReferenceQC:
                     abundance_based_sample_amplicon_stats["mean_abundance"]
                 amplicon_stats["Amplicon repfree k-mers median abundance - no_zero_cov"] = \
                     abundance_based_sample_amplicon_stats["median_abundance"]
+                
+                amplicon_stats["Amplicon repfree k-mers coverage index"] = (
+                    abundance_based_sample_amplicon_stats["num_hashes"] / len(self.amplicon_without_repeats)
+                    if len(self.amplicon_without_repeats) > 0 and abundance_based_sample_amplicon_stats["num_hashes"] is not None else 0
+                )    
+                
             else:
                 abundance_based_sample_amplicon_stats = sample_amplicon_stats
 
@@ -725,7 +745,7 @@ class MultiSigReferenceQC:
                 # tmp corrected coverage index
                 amplicon_stats["tmp corrected amplicon coverage index"] = (
                     1 - (1 - amplicon_stats["Amplicon coverage index"]) ** 
-                    ((1 + _predicted_error_index + _genetic_var) / kmer_yield)
+                    ((1 + predicted_error_index + _genetic_var) / kmer_yield)
                     if amplicon_stats["Amplicon coverage index"] > 0 else 0
                 )
 
@@ -733,14 +753,14 @@ class MultiSigReferenceQC:
                 # (using 'normalized_fracminhash_precision' to parallel the genome logic)
                 min_cov = amplicon_stats["Amplicon coverage index"] * normalized_fracminhash_precision
                 amplicon_stats["razan corrected amplicon coverage index"] = (
-                    1 - (1 - min(min_cov, 1.0)) ** ((1 + _predicted_error_index + _genetic_var) / kmers_to_bases)
+                    1 - (1 - min(min_cov, 1.0)) ** ((1 + predicted_error_index + _genetic_var) / kmers_to_bases)
                     if amplicon_stats["Amplicon coverage index"] > 0 else 0
                 )
 
                 # corrected total abundance
                 amplicon_stats["corrected amplicon total abundance"] = (
                     (abundance_based_sample_amplicon_stats["total_abundance"] +
-                    abundance_based_sample_amplicon_stats["total_abundance"] * _predicted_error_index +
+                    abundance_based_sample_amplicon_stats["total_abundance"] * predicted_error_index +
                     abundance_based_sample_amplicon_stats["total_abundance"] * _genetic_var)
                     / kmers_to_bases
                     if abundance_based_sample_amplicon_stats["total_abundance"] is not None else 0
@@ -753,7 +773,7 @@ class MultiSigReferenceQC:
                 )
 
                 # corrected mean abundance - no_zero_cov
-                amplicon_denominator = amplicon_stats["razan corrected amplicon coverage index"] * len(self.amplicon_sig)
+                amplicon_denominator = sample_amplicon_stats["num_hashes"]
                 if amplicon_denominator == 0:
                     amplicon_stats["corrected amplicon mean abundance - no_zero_cov"] = 0
                 else:
@@ -762,16 +782,31 @@ class MultiSigReferenceQC:
 
                 # corrected mapping index for amplicons
                 amplicon_stats["corrected amplicon mapping index"] = (
-                    (sample_amplicon_stats["total_abundance"] + sample_amplicon_stats["total_abundance"] * _predicted_error_index + sample_amplicon_stats["total_abundance"] * _genetic_var)
+                    (sample_amplicon_stats["total_abundance"] + sample_amplicon_stats["total_abundance"] * predicted_error_index + sample_amplicon_stats["total_abundance"] * _genetic_var)
                     / sample_stats["k-mer total abundance"]
                     if (sample_stats.get("k-mer total abundance", 0) > 0
                         and sample_amplicon_stats["total_abundance"] is not None) else 0
                 )
+                
+                if self.repetitive_aware_flag:
+                    amplicon_stats["corrected repfree amplicon total abundance"] = (
+                        (abundance_based_sample_amplicon_stats["total_abundance"] +
+                        abundance_based_sample_amplicon_stats["total_abundance"] * predicted_error_index +
+                        abundance_based_sample_amplicon_stats["total_abundance"] * _genetic_var)
+                        / kmers_to_bases
+                        if abundance_based_sample_amplicon_stats["total_abundance"] is not None else 0
+                    )
+                    amplicon_stats["corrected repfree amplicon mean abundance"] = (
+                        amplicon_stats["corrected repfree amplicon total abundance"] / len(self.amplicon_without_repeats)
+                        if len(self.amplicon_sig) > 0 else 0
+                    )
+                    amplicon_denominator = abundance_based_sample_amplicon_stats["num_hashes"]
+                    if amplicon_denominator == 0:
+                        amplicon_stats["corrected repfree amplicon mean abundance - no_zero_cov"] = 0
+                    else:
+                        amplicon_stats["corrected repfree amplicon mean abundance - no_zero_cov"] = \
+                            amplicon_stats["corrected repfree amplicon total abundance"] / amplicon_denominator
 
-                # predicted sequencing error rate (amplicon version)
-                # Typically the error rate applies to the entire sample, but if you need
-                # an amplicon-specific stat, you can reuse the same formula:
-                amplicon_stats["amplicon predicted error rate"] = 100 * (_predicted_error_index / sample_sig.ksize)
 
                 # NEW: saturation model (“grok”) for amplicons
                 # raw
@@ -815,15 +850,9 @@ class MultiSigReferenceQC:
 
         # ============= Contamination/Error STATS =============
         self.logger.debug("Calculating error and contamination indices.")
-        sample_nonref = sample_sig - self.reference_sig
-        sample_nonref_singletons = sample_nonref.count_singletons()
         sample_nonref_non_singletons = sample_nonref.total_abundance - sample_nonref_singletons
-        sample_total_abundance = sample_sig.total_abundance
 
-        predicted_error_index = (
-            sample_nonref_singletons / sample_total_abundance
-            if sample_total_abundance is not None and sample_total_abundance > 0 else 0
-        )
+
         predicted_contamination_index = (
             sample_nonref_non_singletons / sample_total_abundance
             if sample_total_abundance is not None and sample_total_abundance > 0 else 0
@@ -985,7 +1014,6 @@ class MultiSigReferenceQC:
         # ============= VARIANCE NONREF STATS =============
         if self.variance_sigs:
             self.logger.debug("Consuming non-reference k-mers from provided variables.")
-            sample_nonref = sample_sig - self.reference_sig
             self.logger.debug("\tSize of non-reference k-mers in the sample signature: %d hashes.", len(sample_nonref))
             sample_nonref_total_abundance = sample_nonref.total_abundance
             if len(sample_nonref) == 0:
