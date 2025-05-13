@@ -316,138 +316,115 @@ class MultiSigReferenceQC:
         sorted_keys = sorted(chrom_dict, key=lambda x: (int(x.split("-")[1]) if len(x.split("-")) > 1 and x.split("-")[1].isdigit() else float('inf'), x))
         return {k: chrom_dict[k] for k in sorted_keys}
 
-    def _predict_roi_stats(self, sample_sig, kmers_to_bases: float, predict_extra_folds: List[int]) -> Dict[str, Any]:
-        #! TODO: Consider the repfree version in the ROI.
-        
-        """
-        Predict coverage (ROI) statistics.
-        A constant seed is set here to reproduce results exactly.
-        """
-        self.logger.debug("Starting ROI (coverage) prediction with fixed seed for reproducibility.")
+
+    def _predict_roi_stats(self, sample_sig, kmers_to_bases: float, predict_extra_folds: list) -> dict:
         roi_stats = {}
         predicted_fold_coverage = {}
         predicted_fold_delta_coverage = {}
         predicted_unique_hashes = {}
-        nparts = 30
 
-        # Set seed so ROI results are reproducible.
         np.random.seed(42)
 
         _sample_sig_genome = sample_sig & self.reference_sig
-        hashes = _sample_sig_genome.hashes
-        abundances = _sample_sig_genome.abundances
-        N = len(hashes)
-
-        fractions = np.random.dirichlet([1] * nparts, size=N)
-        counts = np.round(abundances[:, None] * fractions).astype(int)
-        differences = abundances - counts.sum(axis=1)
-        indices = np.argmax(counts, axis=1)
-        counts[np.arange(N), indices] += differences
-        counts_cumulative = counts.cumsum(axis=1)
-        cumulative_total_abundances = counts.sum(axis=0).cumsum()
-
-        # Ensure the reference signature is of GENOME type
-        self.reference_sig.sigtype = SigType.GENOME
-
-        cumulative_coverage_indices = np.zeros(nparts)
-        cumulative_unique_hashes = np.zeros(nparts)
+        abundances = np.array(_sample_sig_genome.abundances, dtype=float)
+        N = len(abundances)
         total_reference_kmers = len(self.reference_sig)
 
-        for i in range(nparts):
-            cumulative_counts = counts_cumulative[:, i]
-            idx = cumulative_counts > 0
-            num_unique_kmers = np.sum(idx)
-            cumulative_unique_hashes[i] = num_unique_kmers
-            cumulative_coverage_indices[i] = num_unique_kmers / self.REFERENCE_UNIQUE_KMERS if self.REFERENCE_UNIQUE_KMERS > 0 else 0
+        if N == 0 or total_reference_kmers == 0:
+            self.logger.warning("Sample or reference has zero k-mers. Returning empty predictions.")
+            for extra_fold in predict_extra_folds:
+                predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = 0.0
+                predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = 0.0
+            predicted_unique_hashes = {
+                "Predicted genomic unique k-mers": 0,
+                "Delta genomic unique k-mers": 0,
+                "Adjusted genome coverage index": 0.0,
+            }
+            roi_stats.update(predicted_fold_coverage)
+            roi_stats.update(predicted_fold_delta_coverage)
+            roi_stats.update(predicted_unique_hashes)
+            return roi_stats
 
-        coverage_depth_data = []
-        for i in range(nparts):
-            coverage_depth_data.append({
-                "cumulative_parts": i + 1,
-                "cumulative_total_abundance": cumulative_total_abundances[i],
-                "cumulative_coverage_index": cumulative_coverage_indices[i],
-                "cumulative_unique_hashes": cumulative_unique_hashes[i]
-            })
+        abundances.sort()
+        cum_kmers = np.cumsum(abundances)
+        cum_unique = np.arange(1, N + 1)
+        cum_fraction = cum_unique / float(total_reference_kmers)
 
-        x_unique = np.array([d["cumulative_total_abundance"] for d in coverage_depth_data])
-        y_unique = np.array([d["cumulative_unique_hashes"] for d in coverage_depth_data])
-        y_unique = np.maximum.accumulate(y_unique)
-        initial_guess_unique = [y_unique[-1], x_unique[len(x_unique) // 2]]
+        x_data = np.concatenate([[0], cum_kmers])
+        y_data = np.concatenate([[0], cum_fraction])
 
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", OptimizeWarning)
-                params_unique, covariance_unique = curve_fit(
-                    MultiSigReferenceQC._saturation_model,
-                    x_unique,
-                    y_unique,
-                    p0=initial_guess_unique,
-                    bounds=(0, np.inf),
-                    maxfev=10000,
-                )
-        except (RuntimeError, OptimizeWarning) as exc:
-            raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.") from exc
+        # Model definitions
+        def michaelis_menten(x, K): return x / (K + x)
+        def hill(x, K, n): return (x**n) / (K**n + x**n)
+        def exponential(x, lam): return 1.0 - np.exp(-lam * x)
+        def weibull(x, lam, k): return 1.0 - np.exp(-(lam * x)**k)
 
-        if np.isinf(covariance_unique).any() or np.isnan(covariance_unique).any():
-            raise RuntimeError("Saturation model fitting for Genomic Unique k-mers failed.")
+        models = {
+            'Michaelis-Menten': (michaelis_menten, [np.median(cum_kmers)]),
+            'Hill': (hill, [np.median(cum_kmers), 1.0]),
+            'Exponential': (exponential, [-np.log(1 - y_data[-1]) / max(x_data[-1], 1e-6)]),
+            'Weibull': (weibull, [1e-3, 1.0]),
+        }
 
-        a_unique, b_unique = params_unique
+        best_model = None
+        best_params = None
+        best_aic = np.inf
+        n = len(x_data)
+
+        def compute_aic(rss, k):
+            return n * np.log(rss / n + 1e-12) + 2 * k
+
+        for name, (model_func, p0) in models.items():
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", OptimizeWarning)
+                    params, _ = curve_fit(model_func, x_data, y_data, p0=p0, bounds=(1e-8, np.inf), maxfev=10000)
+                pred = model_func(x_data, *params)
+                rss = np.sum((pred - y_data)**2)
+                aic = compute_aic(rss, len(params))
+                if aic < best_aic:
+                    best_aic = aic
+                    best_model = (model_func, params)
+            except Exception:
+                continue
+
+        if best_model is None:
+            self.logger.warning("All model fittings failed. Falling back to Michaelis-Menten heuristic.")
+            best_model = (michaelis_menten, [np.median(cum_kmers)])
+
+        model_func, params = best_model
+
+        # Current sequencing abundance
         if sample_sig._bases_count is not None and sample_sig._bases_count > 0:
             corrected_total_abundance = sample_sig._bases_count / sample_sig.scale
         else:
-            self.logger.warning("Total bases count is zero or None. This will affect the calculation of adjusted coverage index and k-mer-to-bases ratio.")
-            corrected_total_abundance = x_unique[-1]
+            corrected_total_abundance = float(np.sum(abundances))
 
-        predicted_genomic_unique_hashes = MultiSigReferenceQC._saturation_model(corrected_total_abundance, a_unique, b_unique)
-        current_unique_hashes = y_unique[-1]
-        predicted_genomic_unique_hashes = max(predicted_genomic_unique_hashes, current_unique_hashes)
+        # Predict now
+        predicted_now = model_func(corrected_total_abundance, *params)
+        predicted_now = np.clip(predicted_now, 0.0, 1.0)
+
+        current_unique_hashes = cum_unique[-1]
+        predicted_genomic_unique_hashes = predicted_now * total_reference_kmers
         delta_unique_hashes = predicted_genomic_unique_hashes - current_unique_hashes
-        adjusted_genome_coverage_index = predicted_genomic_unique_hashes / total_reference_kmers if total_reference_kmers > 0 else 0.0
+        adjusted_genome_coverage_index = predicted_genomic_unique_hashes / total_reference_kmers if total_reference_kmers else 0.0
 
         predicted_unique_hashes = {
             "Predicted genomic unique k-mers": predicted_genomic_unique_hashes,
             "Delta genomic unique k-mers": delta_unique_hashes,
-            "Adjusted genome coverage index": adjusted_genome_coverage_index
+            "Adjusted genome coverage index": adjusted_genome_coverage_index,
         }
 
-        x_total_abundance = x_unique
-        y_coverage = cumulative_coverage_indices
-        initial_guess_coverage = [y_coverage[-1], x_total_abundance[len(x_total_abundance) // 2]]
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", OptimizeWarning)
-                params_coverage, covariance_coverage = curve_fit(
-                    MultiSigReferenceQC._saturation_model,
-                    x_total_abundance,
-                    y_coverage,
-                    p0=initial_guess_coverage,
-                    bounds=(0, np.inf),
-                    maxfev=10000,
-                )
-        except (RuntimeError, OptimizeWarning) as exc:
-            raise RuntimeError("Saturation model fitting for coverage failed.") from exc
-
-        if np.isinf(covariance_coverage).any() or np.isnan(covariance_coverage).any():
-            raise RuntimeError("Saturation model fitting for coverage failed.")
-        a_coverage, b_coverage = params_coverage
-
+        # Predict for each fold
         for extra_fold in predict_extra_folds:
             if extra_fold < 1:
                 continue
-            #! BETA: Predict the coverage based on the adjusted total abundance
-            predicted_total_abundance = (1 + extra_fold) * corrected_total_abundance
-            predicted_coverage = MultiSigReferenceQC._saturation_model(predicted_total_abundance, a_coverage, b_coverage)
-            max_coverage = 1.0
-            predicted_coverage = min(predicted_coverage, max_coverage)
-            predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = predicted_coverage
-            _delta_coverage = predicted_coverage - y_coverage[-1]
-            predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = _delta_coverage
-
-            if _delta_coverage < 0:
-                self.logger.warning(
-                    "Predicted coverage at %.2f-fold increase is less than the current coverage.",
-                    extra_fold,
-                )
+            predicted_total = corrected_total_abundance * (1 + extra_fold)
+            pred_coverage = model_func(predicted_total, *params)
+            pred_coverage = np.clip(pred_coverage, 0.0, 1.0)
+            predicted_fold_coverage[f"Predicted coverage with {extra_fold} extra folds"] = pred_coverage
+            _delta = pred_coverage - predicted_now
+            predicted_fold_delta_coverage[f"Predicted delta coverage with {extra_fold} extra folds"] = max(0.0, _delta)
 
         roi_stats.update(predicted_fold_coverage)
         roi_stats.update(predicted_fold_delta_coverage)
