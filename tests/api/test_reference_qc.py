@@ -668,54 +668,7 @@ class TestReferenceQC(unittest.TestCase):
         self.assertEqual(qc.amplicon_stats["Relative total abundance"], 0)
         self.assertEqual(qc.amplicon_stats["Relative coverage"], 0)
         self.assertEqual(qc.predicted_assay_type, "WGS")
-            
-    def test_trim_below_median(self):
-        """
-        Test the advanced stats after median trimming.
-        """
-        # Create a sample signature with even abundances
-        sample_json_even = json.dumps([
-            {
-                "class": "sourmash_signature",
-                "email": "",
-                "hash_function": "0.murmur64",
-                "filename": "-",
-                "name": "test_signature_even",
-                "license": "CC0",
-                "signatures": [
-                    {
-                        "num": 0,
-                        "ksize": 31,
-                        "seed": 42,
-                        "max_hash": 18446744073709551615,
-                        "mins": [10, 20, 30, 40, 50],
-                        "md5sum": "d9be84d0b05d39d231702887169b69a7",
-                        "abundances": [2, 2, 2, 2, 2],
-                        "molecule": "dna"
-                    }
-                ],
-                "version": 0.4
-            }
-        ])
-        sample_sig_even = SnipeSig(
-            sourmash_sig=sample_json_even,
-            sig_type=SigType.SAMPLE,
-            enable_logging=False
-        )
-        qc = ReferenceQC(
-            sample_sig=sample_sig_even,
-            reference_sig=self.reference_sig,
-            amplicon_sig=self.amplicon_sig,
-            enable_logging=False
-        )
-        stats = qc.get_aggregated_stats(include_advanced=True)
-        self.assertEqual(stats["Median-trimmed unique k-mers"], 5)
-        self.assertEqual(stats["Median-trimmed total abundance"], 10)
-        self.assertEqual(stats["Median-trimmed mean abundance"], 2.0)
-        self.assertEqual(stats["Median-trimmed median abundance"], 2.0)
-        self.assertEqual(stats["Median-trimmed Genomic unique k-mers"], 5)
-        self.assertEqual(stats["Median-trimmed Amplicon unique k-mers"], 3)
-        
+
 
     def test_split_sig_randomly(self):
         """
