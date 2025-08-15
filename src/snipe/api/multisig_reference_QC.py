@@ -429,6 +429,126 @@ class MultiSigReferenceQC:
         roi_stats.update(predicted_fold_coverage)
         roi_stats.update(predicted_fold_delta_coverage)
         roi_stats.update(predicted_unique_hashes)
+        roi_stats["Best model"] = best_model[0].__name__
+        return roi_stats
+
+    def _exp_predict_roi_stats(self, sample_sig, kmers_to_bases: float, predict_extra_folds: list) -> dict:
+        """
+        - Uses a 2-parameter Weibull curve with asymptote fixed at 1 (100 % genome coverage)
+        """
+        roi_stats: Dict[str, Any] = {}
+        pred_fold_cov: Dict[str, float] = {}
+        pred_fold_delta: Dict[str, float] = {}
+        pred_unique_hashes: Dict[str, float] = {}
+
+        # ------------------------------------------------------------------ #
+        # 0. consistent RNG for reproducibility                              #
+        # ------------------------------------------------------------------ #
+        np.random.seed(42)
+
+        # ------------------------------------------------------------------ #
+        # 1. extract genome‑intersected abundances                            #
+        # ------------------------------------------------------------------ #
+        _sample_sig_genome = sample_sig & self.reference_sig
+        abundances = np.asarray(_sample_sig_genome.abundances, dtype=float)
+        N          = abundances.size
+        total_reference_kmers = len(self.reference_sig)
+
+        if N == 0 or total_reference_kmers == 0:
+            self.logger.warning("Sample or reference has zero k-mers. Returning empty predictions.")
+            for fld in predict_extra_folds:
+                pred_fold_cov[f"Predicted coverage with {fld} extra folds"] = 0.0
+                pred_fold_delta[f"Predicted delta coverage with {fld} extra folds"] = 0.0
+            pred_unique_hashes = {
+                "Predicted genomic unique k-mers": 0,
+                "Delta genomic unique k-mers": 0,
+                "Adjusted genome coverage index": 0.0,
+            }
+            roi_stats.update(pred_fold_cov)
+            roi_stats.update(pred_fold_delta)
+            roi_stats.update(pred_unique_hashes)
+            return roi_stats
+
+        # ------------------------------------------------------------------ #
+        # 2. build empirical rarefaction curve                              #
+        # ------------------------------------------------------------------ #
+        abundances.sort()                          # ascending
+        cum_abund = np.cumsum(abundances)          # cumulative total abundance per new k-mer discovered
+        cum_unique = np.arange(1, N + 1)           # cumulative count of unique k-mers discovered
+        y_frac = cum_unique / float(total_reference_kmers)  # coverage fraction
+
+        x_data = np.concatenate([[0.0], cum_abund])
+        y_data = np.concatenate([[0.0], y_frac])
+
+        # ------------------------------------------------------------------ #
+        # 3. fit 2-parameter Weibull (asymptote = 1)                        #
+        # ------------------------------------------------------------------ #
+        def _weibull(x, lam, k):
+            return 1.0 - np.exp(-np.power(x / lam, k))
+
+        lam_init = max(np.median(cum_abund), 1e-3)
+        k_init   = 0.8
+        p0       = [lam_init, k_init]
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", OptimizeWarning)
+                params, _ = curve_fit(
+                    _weibull,
+                    x_data,
+                    y_data,
+                    p0=p0,
+                    bounds=(1e-10, np.inf),
+                    maxfev=20_000,
+                )
+        except RuntimeError:
+            # fall back to exponential (k=1)
+            params = [lam_init, 1.0]
+        lam_fit, k_fit = params
+
+        # helper
+        def predict_cov(total_abund: float) -> float:
+            val = _weibull(total_abund, lam_fit, k_fit)
+            return float(min(max(val, 0.0), 1.0))
+
+        # ------------------------------------------------------------------ #
+        # 4. compute current abundance & baseline coverage                  #
+        # ------------------------------------------------------------------ #
+        if getattr(sample_sig, "_bases_count", None) and sample_sig._bases_count > 0:
+            corrected_total_abund = sample_sig._bases_count / sample_sig.scale
+        else:
+            corrected_total_abund = float(abundances.sum())
+
+        cov_now = predict_cov(corrected_total_abund)
+
+        # unique k‑mers predictions
+        current_unique_kmers = cum_unique[-1]
+        predicted_unique = cov_now * total_reference_kmers
+        delta_unique     = predicted_unique - current_unique_kmers
+        adj_cov_index    = predicted_unique / total_reference_kmers if total_reference_kmers else 0.0
+
+        pred_unique_hashes = {
+            "Predicted genomic unique k-mers": predicted_unique,
+            "Delta genomic unique k-mers": delta_unique,
+            "Adjusted genome coverage index": adj_cov_index,
+        }
+
+        # ------------------------------------------------------------------ #
+        # 5. predict coverage for requested extra folds                     #
+        # ------------------------------------------------------------------ #
+        for fld in predict_extra_folds:
+            if fld < 1:
+                continue
+            new_total = corrected_total_abund * (1 + fld)
+            cov_pred  = predict_cov(new_total)
+            pred_fold_cov[f"Predicted coverage with {fld} extra folds"] = cov_pred
+            pred_fold_delta[f"Predicted delta coverage with {fld} extra folds"] = max(0.0, cov_pred - cov_now)
+
+        # ------------------------------------------------------------------ #
+        # 6. assemble output                                                #
+        # ------------------------------------------------------------------ #
+        roi_stats.update(pred_fold_cov)
+        roi_stats.update(pred_fold_delta)
+        roi_stats.update(pred_unique_hashes)
         return roi_stats
 
     # ----------------------- MAIN PUBLIC METHOD -----------------------
