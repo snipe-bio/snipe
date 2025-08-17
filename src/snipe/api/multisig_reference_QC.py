@@ -682,7 +682,6 @@ class MultiSigReferenceQC:
             genome_stats.update({
                 "Genomic repfree unique k-mers": abundance_based_sample_genome_stats["num_hashes"],
                 "Genomic repfree k-mers total abundance": abundance_based_sample_genome_stats["total_abundance"],
-                "Genomic repfree k-mers mean abundance": abundance_based_sample_genome_stats["total_abundance"] / self.reference_without_repeats,
                 "Genomic repfree k-mers mean abundance - no_zero_cov": abundance_based_sample_genome_stats["mean_abundance"],
                 "Genomic repfree k-mers median abundance - no_zero_cov": abundance_based_sample_genome_stats["median_abundance"],
                 "Genomic repfree k-mers coverage index": (abundance_based_sample_genome_stats["num_hashes"] / len(self.reference_without_repeats)
@@ -814,7 +813,6 @@ class MultiSigReferenceQC:
 
                 amplicon_stats["Amplicon repfree k-mers total abundance"] = \
                     abundance_based_sample_amplicon_stats["total_abundance"]
-                amplicon_stats["Amplicon repfree k-mers mean abundance"] = abundance_based_sample_amplicon_stats["total_abundance"] / self.amplicon_without_repeats
                 amplicon_stats["Amplicon repfree k-mers mean abundance - no_zero_cov"] = \
                     abundance_based_sample_amplicon_stats["mean_abundance"]
                 amplicon_stats["Amplicon repfree k-mers median abundance - no_zero_cov"] = \
