@@ -680,11 +680,25 @@ class MultiSigReferenceQC:
             sample_genome_non_repetitive = sample_genome.copy()
             sample_genome_non_repetitive &= self.reference_without_repeats
             abundance_based_sample_genome_stats = sample_genome_non_repetitive.get_sample_stats
+            
+            ### --------- variance calculation heuristics -------------
+            _projected_repfree_genomic_abundance_array_length = len(self.reference_without_repeats)
+            # Extend np array with zeros to match reference length
+            pad_length = _projected_repfree_genomic_abundance_array_length - len(sample_genome_non_repetitive.abundances)
+            _custom_genomic_repfree_abundances = np.concatenate([
+                sample_genome_non_repetitive.abundances,
+                np.zeros(pad_length)
+            ])
+            # Remove top 1% of the abundances by value
+            _custom_genomic_repfree_abundances = np.sort(_custom_genomic_repfree_abundances)
+            _custom_genomic_repfree_abundances = _custom_genomic_repfree_abundances[:int(len(_custom_genomic_repfree_abundances) * 0.99)]
+
+
             genome_stats.update({
                 "Genomic repfree unique k-mers": abundance_based_sample_genome_stats["num_hashes"],
                 "Genomic repfree k-mers total abundance": abundance_based_sample_genome_stats["total_abundance"],
-                "Genomic repfree k-mers mean abundance": (abundance_based_sample_genome_stats["total_abundance"] / len(self.reference_without_repeats)
-                                                          if len(self.reference_without_repeats) > 0 and abundance_based_sample_genome_stats["total_abundance"] is not None else 0),
+                "Genomic repfree k-mers mean abundance": (abundance_based_sample_genome_stats["total_abundance"] / len(self.reference_without_repeats) if len(self.reference_without_repeats) > 0 and abundance_based_sample_genome_stats["total_abundance"] is not None else 0),
+                "Genomic repfree k-mers variance abundance": np.var(_custom_genomic_repfree_abundances),
                 "Genomic repfree k-mers mean abundance - no_zero_cov": abundance_based_sample_genome_stats["mean_abundance"],
                 "Genomic repfree k-mers median abundance - no_zero_cov": abundance_based_sample_genome_stats["median_abundance"],
                 "Genomic repfree k-mers coverage index": (abundance_based_sample_genome_stats["num_hashes"] / len(self.reference_without_repeats)
@@ -814,12 +828,25 @@ class MultiSigReferenceQC:
                 self.amplicon_without_repeats = self.amplicon_sig & self.reference_without_repeats
                 abundance_based_sample_amplicon_stats = sample_amplicon_non_repetitive.get_sample_stats
 
+                ### --------- amplicon variance calculation heuristics -------------
+                _projected_repfree_amplicon_abundance_array_length = len(self.amplicon_without_repeats)
+                # Extend np array with zeros to match amplicon reference length
+                pad_length = _projected_repfree_amplicon_abundance_array_length - len(sample_amplicon_non_repetitive.abundances)
+                _custom_amplicon_repfree_abundances = np.concatenate([
+                    sample_amplicon_non_repetitive.abundances,
+                    np.zeros(pad_length)
+                ])
+                # Remove top 1% of the abundances by value
+                _custom_amplicon_repfree_abundances = np.sort(_custom_amplicon_repfree_abundances)
+                _custom_amplicon_repfree_abundances = _custom_amplicon_repfree_abundances[:int(len(_custom_amplicon_repfree_abundances) * 0.99)]
+
                 amplicon_stats["Amplicon repfree k-mers total abundance"] = \
                     abundance_based_sample_amplicon_stats["total_abundance"]
                 amplicon_stats["Amplicon repfree k-mers mean abundance"] = (
                     abundance_based_sample_amplicon_stats["total_abundance"] / len(self.amplicon_without_repeats)
                     if len(self.amplicon_without_repeats) > 0 and abundance_based_sample_amplicon_stats["total_abundance"] is not None else 0
                 )
+                amplicon_stats["Amplicon repfree k-mers variance abundance"] = np.var(_custom_amplicon_repfree_abundances)
                 amplicon_stats["Amplicon repfree k-mers mean abundance - no_zero_cov"] = \
                     abundance_based_sample_amplicon_stats["mean_abundance"]
                 amplicon_stats["Amplicon repfree k-mers median abundance - no_zero_cov"] = \
