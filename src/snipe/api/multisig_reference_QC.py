@@ -667,6 +667,7 @@ class MultiSigReferenceQC:
             "Genomic unique k-mers": sample_genome_stats["num_hashes"],
             "Genomic k-mers total abundance": sample_genome_stats["total_abundance"],
             "Genomic k-mers mean abundance": sample_genome_stats["total_abundance"] / self.REFERENCE_TOTAL_KMERS,
+            "Genomic k-mer variance abundance": np.var(sample_genome.abundances),
             "Genomic k-mers mean abundance - no_zero_cov": sample_genome_stats["mean_abundance"],
             "Genomic k-mers median abundance - no_zero_cov": sample_genome_stats["median_abundance"],
             "Genome coverage index": (sample_genome_stats["num_hashes"] / self.REFERENCE_UNIQUE_KMERS
@@ -836,6 +837,7 @@ class MultiSigReferenceQC:
                 "Amplicon unique k-mers": sample_amplicon_stats["num_hashes"],
                 "Amplicon k-mers total abundance": abundance_based_sample_amplicon_stats["total_abundance"],
                 "Amplicon k-mers mean abundance": abundance_based_sample_amplicon_stats["mean_abundance"],
+                "Amplicon k-mer variance abundance": np.var(sample_amplicon.abundances),
                 "Amplicon k-mers median abundance": abundance_based_sample_amplicon_stats["median_abundance"],
                 "Amplicon coverage index": (
                     sample_amplicon_stats["num_hashes"] / len(self.amplicon_sig)
